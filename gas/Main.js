@@ -3,7 +3,7 @@
  * 以一等管理者（存放帳號）身分執行，開放所有人呼叫；權限在每個動作內檢查。
  */
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 
 function doGet() {
   return json_({ ok: true, app: '資產管理系統', version: APP_VERSION, time: new Date().toISOString() });
