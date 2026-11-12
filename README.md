@@ -15,6 +15,12 @@
 
 推送到 `main` 後，GitHub Actions 會把 `web/` 與 `shared/` 部署到 GitHub Pages。
 
+## 後端（Apps Script）
+
+- 專案屬於單位專用 Google 帳號，`clasp` 需以該帳號登入（`clasp login`）。
+- 改完 `gas/` 後執行 `./deploy.sh "說明"`：推送程式並更新同一個部署，`/exec` 網址不變。
+- 後端網址記在 `web/config.json`；交接或換帳號時只改這個檔案。
+
 ## 交接
 
 本組織至少保持兩位擁有者。程式碼跟著組織走，資料跟著專用 Google 帳號走；交接步驟見管理者 SOP。
