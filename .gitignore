@@ -1,0 +1,19 @@
+# 學校資料永遠不進這個 repo（清冊、照片、匯出檔都放在 Google 或本機 school/Asset）
+*.pdf
+*.xlsx
+*.xls
+*.csv
+*.docx
+*.jpg
+*.jpeg
+*.png
+*.heic
+
+# clasp 登入憑證（只在各自電腦的家目錄，保險起見）
+.clasprc.json
+
+# 系統檔
+.DS_Store
+._*
+node_modules/
+_site/
