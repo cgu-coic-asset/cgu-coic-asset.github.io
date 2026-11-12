@@ -1,0 +1,93 @@
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #667085; --line: #d9dee7;
+  --accent: #2457c5; --accent-text: #ffffff; --ok: #147a3d; --warn: #a15c07; --bad: #b42318;
+  --chip: #eef2f7; --shadow: 0 1px 2px rgba(16, 24, 40, .06);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --card: #1b1f27; --text: #e6e9ef; --muted: #9aa3b2; --line: #2c3340;
+    --accent: #6c97ff; --accent-text: #0d1220; --ok: #4cc27a; --warn: #e3a64a; --bad: #ff7b6e;
+    --chip: #262c37; --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+a { color: var(--accent); }
+.muted { color: var(--muted); }
+.center { text-align: center; }
+
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top));
+  background: var(--card); border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 700; color: var(--text); text-decoration: none; white-space: nowrap; }
+.who { display: flex; align-items: center; gap: 8px; min-height: 40px; font-size: .9rem; }
+.who .name { max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.view { max-width: 760px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.3rem; margin: 4px 0 12px; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; }
+
+.card {
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--shadow);
+}
+.grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 560px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+.tile {
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  min-height: 84px; padding: 12px; border-radius: 12px; text-decoration: none;
+  background: var(--card); border: 1px solid var(--line); color: var(--text); box-shadow: var(--shadow);
+}
+.tile strong { font-size: 1rem; }
+.tile span { font-size: .8rem; color: var(--muted); }
+.tile.disabled { opacity: .55; pointer-events: none; }
+
+.chip {
+  display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: .78rem;
+  background: var(--chip); color: var(--muted); white-space: nowrap;
+}
+.chip.ok { color: var(--ok); } .chip.bad { color: var(--bad); } .chip.accent { color: var(--accent); }
+
+button, .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 40px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--card); color: var(--text); font: inherit; cursor: pointer; text-decoration: none;
+}
+button.primary, .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.spread { justify-content: space-between; }
+
+label { display: block; font-size: .85rem; color: var(--muted); margin: 10px 0 4px; }
+input, select, textarea {
+  width: 100%; min-height: 40px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card); color: var(--text); font: inherit;
+}
+
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { padding: 10px 0; border-top: 1px solid var(--line); }
+.list li:first-child { border-top: 0; }
+.list .meta { font-size: .85rem; color: var(--muted); word-break: break-all; }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+  max-width: calc(100% - 32px); padding: 10px 14px; border-radius: 10px;
+  background: var(--text); color: var(--bg); font-size: .9rem; opacity: 0; pointer-events: none;
+  transition: opacity .2s;
+}
+.toast.show { opacity: 1; }
+.toast.bad { background: var(--bad); color: #fff; }
+
+dialog {
+  width: min(480px, calc(100% - 32px)); border: 1px solid var(--line); border-radius: 14px;
+  background: var(--card); color: var(--text); padding: 16px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, .4); }
