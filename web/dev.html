@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>後端驗收</title>
+<script src="https://accounts.google.com/gsi/client" async></script>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1d2330; --muted:#667085; --line:#d9dee7; --ok:#147a3d; --bad:#b42318; --accent:#2457c5; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.6 system-ui,-apple-system,"PingFang TC","Noto Sans TC",sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:16px; }
+  h1 { font-size:1.3rem; margin:8px 0 4px; }
+  p.lead, .hint { color:var(--muted); font-size:.9rem; margin:0 0 10px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:14px; }
+  h2 { font-size:1.05rem; margin:0 0 6px; }
+  input { padding:8px 10px; border:1px solid var(--line); border-radius:8px; font:inherit; font-size:.9rem; width:100%; margin-top:6px; }
+  button { margin:8px 8px 0 0; padding:8px 14px; border:0; border-radius:8px; background:var(--accent); color:#fff; font:inherit; cursor:pointer; }
+  .out { margin-top:10px; padding:10px; border-radius:8px; background:#f2f4f7; font-size:.85rem; white-space:pre-wrap; word-break:break-all; display:none; }
+  .out.ok { display:block; border-left:4px solid var(--ok); }
+  .out.bad { display:block; border-left:4px solid var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <h1>後端驗收（V0-06）</h1>
+  <p class="lead">開發用頁面：測登入、角色、權限、版本衝突。正式畫面完成後會移除。</p>
+
+  <section>
+    <h2>1. 登入與角色</h2>
+    <div id="gis"></div>
+    <button id="who">我是誰</button>
+    <div class="out" id="o1"></div>
+  </section>
+
+  <section>
+    <h2>2. 管理者名單（只有一等可以看）</h2>
+    <button id="list">讀取名單</button>
+    <div class="out" id="o2"></div>
+  </section>
+
+  <section>
+    <h2>3. 修改姓名（版本檢查）</h2>
+    <p class="hint">先讀取名單，再改自己的姓名。「用舊版本送出」會故意帶上一個版本號，應該被擋下。</p>
+    <input id="email" placeholder="要修改的 Email">
+    <input id="name" placeholder="新的姓名">
+    <button id="save">正常送出</button>
+    <button id="stale">用舊版本送出</button>
+    <div class="out" id="o3"></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let config = null, idToken = null, admins = [];
+
+function show(id, ok, data) {
+  const el = $(id);
+  el.className = 'out ' + (ok ? 'ok' : 'bad');
+  el.textContent = (ok ? '✔ ' : '✘ ') + (typeof data === 'string' ? data : JSON.stringify(data, null, 2));
+}
+
+async function api(action, payload) {
+  const res = await fetch(config.apiUrl, { method: 'POST', body: JSON.stringify({ action, idToken, payload }) });
+  return res.json();
+}
+
+async function run(id, action, payload) {
+  try { const r = await api(action, payload); show(id, r.ok, r.ok ? r.data : r.error); return r; }
+  catch (e) { show(id, false, e.message); return null; }
+}
+
+(async () => {
+  config = await (await fetch('config.json')).json();
+  const init = () => {
+    if (!window.google || !google.accounts) return setTimeout(init, 200);
+    google.accounts.id.initialize({ client_id: config.clientId, callback: r => { idToken = r.credential; run('o1', 'whoami'); } });
+    google.accounts.id.renderButton($('gis'), { theme: 'outline', size: 'large', text: 'signin_with', locale: 'zh-TW' });
+  };
+  init();
+})();
+
+$('who').onclick = () => run('o1', 'whoami');
+$('list').onclick = async () => {
+  const r = await run('o2', 'admin.list');
+  if (r && r.ok) { admins = r.data; if (!$('email').value && admins[0]) $('email').value = admins[0].Email; }
+};
+function current() { return admins.find(a => a.Email.toLowerCase() === $('email').value.trim().toLowerCase()); }
+$('save').onclick = async () => {
+  const a = current(); if (!a) return show('o3', false, '請先讀取名單，並填名單中的 Email');
+  const r = await run('o3', 'admin.update', { email: a.Email, version: a['版本'], changes: { 姓名: $('name').value } });
+  if (r && r.ok) Object.assign(a, r.data);
+};
+$('stale').onclick = () => {
+  const a = current(); if (!a) return show('o3', false, '請先讀取名單，並填名單中的 Email');
+  run('o3', 'admin.update', { email: a.Email, version: String(Number(a['版本']) - 1), changes: { 姓名: $('name').value + '（舊版）' } });
+};
+</script>
+</body>
+</html>

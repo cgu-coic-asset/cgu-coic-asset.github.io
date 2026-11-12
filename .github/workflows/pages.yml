@@ -27,7 +27,7 @@ jobs:
           mkdir -p _site/shared
           cp -r web/. _site/
           cp -r shared/. _site/shared/
-          rm -f _site/shared/.gitkeep
+          rm -f _site/shared/.gitkeep _site/shared/*.test.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

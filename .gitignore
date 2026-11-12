@@ -17,3 +17,6 @@
 ._*
 node_modules/
 _site/
+
+# deploy.sh 從 shared/ 複製進來的檔案
+gas/shared_*.js

@@ -166,30 +166,3 @@ function seedFirstAdmin_(sh, report) {
   });
   report.push('建立 一等管理者 ' + INITIAL_ADMIN_EMAIL);
 }
-
-/** 讀整張分頁為物件陣列（以標題列為鍵）。 */
-function readRows_(sh) {
-  const values = sh.getDataRange().getValues();
-  if (values.length < 2) return [];
-  const headers = values[0].map(String);
-  return values.slice(1).map(function (row) {
-    const o = {};
-    headers.forEach(function (h, i) { o[h] = row[i]; });
-    return o;
-  });
-}
-
-/** 依標題列把物件寫成新的一列（純文字格式）；沒給的欄位留空。 */
-function appendRow_(sh, obj) {
-  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
-  const row = sh.getLastRow() + 1;
-  if (row > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), 100);
-  // 先設成純文字再寫值，資產編號開頭的 0 才不會被吃掉
-  sh.getRange(row, 1, 1, headers.length)
-    .setNumberFormat('@')
-    .setValues([headers.map(function (h) { return obj[h] === undefined ? '' : String(obj[h]); })]);
-}
-
-function now_() {
-  return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss');
-}

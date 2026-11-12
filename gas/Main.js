@@ -1,26 +1,27 @@
 /**
  * 資產管理系統後端入口。
- * 以一等管理者（存放帳號）身分執行，開放所有人呼叫；權限在每個動作內檢查。
+ * 以一等管理者（存放帳號）身分執行，開放所有人呼叫；權限在每個動作內檢查（Api.js）。
+ * 前端一律用 POST，內容為 JSON：{ action, idToken?, payload? }。
  */
 
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.3.0';
 
 function doGet() {
   return json_({ ok: true, app: '資產管理系統', version: APP_VERSION, time: new Date().toISOString() });
 }
 
 function doPost(e) {
-  let req;
   try {
-    req = JSON.parse(e.postData.contents);
+    let req;
+    try {
+      req = JSON.parse(e.postData.contents);
+    } catch (err) {
+      throw new AppError('BAD_REQUEST', '無法解析請求內容');
+    }
+    return json_(handleRequest_(req));
   } catch (err) {
-    return json_({ ok: false, error: { code: 'BAD_REQUEST', message: '無法解析請求內容' } });
-  }
-  switch (req.action) {
-    case 'version':
-      return json_({ ok: true, version: APP_VERSION });
-    default:
-      return json_({ ok: false, error: { code: 'UNKNOWN_ACTION', message: '未知的動作：' + req.action } });
+    if (!(err instanceof AppError)) console.error(err && err.stack || err);
+    return json_(toErrorResponse(err));
   }
 }
 
