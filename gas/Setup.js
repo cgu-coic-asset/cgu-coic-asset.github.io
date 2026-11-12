@@ -52,6 +52,17 @@ function setup() {
   }
 }
 
+/**
+ * 授權：新增功能用到新權限時，在編輯器執行一次，授權畫面請全部勾選。
+ * 權限清單在 appsscript.json 的 oauthScopes。
+ */
+function authorize() {
+  DriveApp.getRootFolder();
+  SpreadsheetApp.getActive();
+  UrlFetchApp.fetch('https://www.google.com', { muteHttpExceptions: true });
+  Logger.log('授權完成，今日剩餘寄信額度：' + MailApp.getRemainingDailyQuota());
+}
+
 /** 列出目前記錄的資料夾與試算表，確認 setup 結果用。 */
 function showSetup() {
   const props = PropertiesService.getScriptProperties().getProperties();
