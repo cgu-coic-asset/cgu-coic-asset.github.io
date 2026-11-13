@@ -59,11 +59,12 @@ var ASSET_SEARCH_FIELDS = [
 ];
 
 /**
- * 篩選。f：{ q, 狀態, 部門代號, 保管人代號, 位置（實際位置）, 已移位, 開放借用, 經管人, 待確認 }；
+ * 篩選。f：{ q, 狀態, 部門代號, 保管人代號, 位置（實際位置）, 已移位, 開放借用, 經管人, 待確認, 建檔照片（有／缺） }；
+ * counts：photoCounts() 的結果（篩建檔照片時需要）。
  * 經管人：'' 不限、'me' 我經管的、'none' 未指定，其他值為 Email。
  * 固定資產的增值紀錄（增值次數不是 0）不另列，併在主紀錄。
  */
-function filterAssets(type, rows, f, myEmail) {
+function filterAssets(type, rows, f, myEmail, counts) {
   const filters = f || {};
   const words = String(filters.q || '').toLowerCase().split(/\s+/).filter(Boolean);
   const me = String(myEmail || '').toLowerCase();
@@ -80,6 +81,11 @@ function filterAssets(type, rows, f, myEmail) {
     if (filters['位置'] && currentLocation(r) !== filters['位置']) return false;
     if (filters['已移位'] && !isMoved(r)) return false;
     if (filters['待確認'] && r['來源狀態'] !== '待確認') return false;
+    if (filters['建檔照片']) {
+      const c = (counts || {})[type + ':' + assetKey(type, r)];
+      const has = !!(c && c['建檔']);
+      if ((filters['建檔照片'] === '有') !== has) return false;
+    }
     const mgr = String(r['經管人'] || '').toLowerCase();
     if (filters['經管人'] === 'me' && (!me || mgr !== me)) return false;
     if (filters['經管人'] === 'none' && mgr) return false;

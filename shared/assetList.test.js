@@ -82,6 +82,12 @@ test('開放借用篩選：是、否、現在可借', () => {
   assert.deepStrictEqual(codes(filterAssets('FIXED', list, { 開放借用: '否' })), ['0300000003#1']);
 });
 
+test('建檔照片：有、缺', () => {
+  const counts = { 'FIXED:0300000001': { 建檔: 2 }, 'FIXED:0300000002': { 盤點: 3 } };
+  assert.deepStrictEqual(codes(filterAssets('FIXED', rows, { 建檔照片: '有' }, '', counts)), ['0300000001#0']);
+  assert.deepStrictEqual(codes(filterAssets('FIXED', rows, { 建檔照片: '缺' }, '', counts)), ['0300000002#0', '0300000003#1']);
+});
+
 test('篩選選單的值', () => {
   assert.deepStrictEqual(distinctValues(rows, '部門代號').map((v) => v.value), ['D000', 'D100']);
   assert.deepStrictEqual(distinctValues(rows, '保管人代號').map((v) => v.label), ['D000000001 甲', 'D000000002 乙']);

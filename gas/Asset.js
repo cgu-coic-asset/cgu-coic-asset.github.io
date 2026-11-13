@@ -13,7 +13,7 @@ function activeManagers_() {
 
 function assetList_(payload) {
   const t = importTarget_(payload.type);
-  return { rows: readRows_(sheet_(t.book, t.sheet)).map(publicRow_), managers: activeManagers_() };
+  return { rows: readRows_(sheet_(t.book, t.sheet)).map(publicRow_), managers: activeManagers_(), photoCounts: photoCountsAll_() };
 }
 
 /** 固定資產回傳同一資產編號的所有紀錄（含增值）；保管品回傳一筆。 */

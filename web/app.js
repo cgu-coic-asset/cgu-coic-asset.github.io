@@ -341,11 +341,15 @@ function renderAssetDetail(view, type, rows, managers) {
     esc(main['修改時間'] || main['建立時間']) + ' ' + esc(main['修改者'] || main['建立者']) +
     (main['最後匯入批次'] ? '｜匯入批次 ' + esc(main['最後匯入批次']) : '') + '</div></div>' +
     (additions ? '<div class="card"><h2>增值紀錄</h2><ul class="list">' + additions + '</ul></div>' : '') +
+    '<div class="card"><h2>建檔照片</h2><div id="photoBox"><p class="muted">載入中…</p></div>' +
+    (can(state.me.role, 'photo.upload') ? photoButtonsHtml() : '') + '<ul class="list" id="upList"></ul></div>' +
     '<div class="card"><h2>管理</h2><div class="row">' +
     (can(state.me.role, 'asset.edit') ? '<button class="primary" id="aEdit">編輯</button>' : '') +
-    '<button disabled>盤點</button><button disabled>借出</button><button disabled>歸還</button>' +
-    '<button disabled>補拍建檔照片</button></div></div>' +
+    '<button disabled>盤點</button><button disabled>借出</button><button disabled>歸還</button></div></div>' +
     '<a class="btn" href="#/assets">回資產清單</a>';
+  const photoKey = photoAssetKey(type, main);
+  loadPhotos(type, photoKey);
+  if (can(state.me.role, 'photo.upload')) bindPhotoButtons(type, photoKey);
   const editBtn = $('#aEdit');
   if (editBtn) editBtn.onclick = () => editAsset(type, main, managers, (updated) => {
     rows[0] = updated;
@@ -406,6 +410,184 @@ function editAsset(type, row, managers, done) {
   dlg.showModal();
 }
 
+// ----- 照片 -----
+
+/** 讀 JPEG 內建的拍攝時間（EXIF DateTimeOriginal，沒有就退回 DateTime）。 */
+async function readExifDate(file) {
+  try {
+    const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (v.getUint16(0) !== 0xFFD8) return '';
+    let off = 2;
+    while (off + 10 < v.byteLength) {
+      const marker = v.getUint16(off);
+      const len = v.getUint16(off + 2);
+      if (marker === 0xFFE1 && v.getUint32(off + 4) === 0x45786966) return parseTiff(v, off + 10) || '';
+      if ((marker & 0xFF00) !== 0xFF00) return '';
+      off += 2 + len;
+    }
+  } catch (e) { /* 讀不到就只記上傳時間 */ }
+  return '';
+}
+
+function parseTiff(v, start) {
+  const le = v.getUint16(start) === 0x4949;
+  const u16 = (o) => v.getUint16(start + o, le);
+  const u32 = (o) => v.getUint32(start + o, le);
+  const ifd = (o) => {
+    const tags = {};
+    const n = u16(o);
+    for (let i = 0; i < n; i++) { const e = o + 2 + i * 12; tags[u16(e)] = { count: u32(e + 4), at: e + 8 }; }
+    return tags;
+  };
+  const ascii = (t) => {
+    const o = t.count > 4 ? u32(t.at) : t.at;
+    let s = '';
+    for (let i = 0; i < t.count - 1; i++) s += String.fromCharCode(v.getUint8(start + o + i));
+    return s;
+  };
+  const ifd0 = ifd(u32(4));
+  if (ifd0[0x8769]) { const ex = ifd(u32(ifd0[0x8769].at)); if (ex[0x9003]) return ascii(ex[0x9003]); }
+  return ifd0[0x0132] ? ascii(ifd0[0x0132]) : '';
+}
+
+/** 壓縮成長邊 1600 像素的 JPEG（依照片方向轉正）。 */
+async function compressImage(file, maxEdge = 1600, quality = 0.8) {
+  let bmp;
+  try {
+    bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch (e) {
+    throw new Error('無法讀取這個檔案（請用一般 JPEG 照片；iPhone 請在設定改為「最相容」）');
+  }
+  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * scale);
+  const h = Math.round(bmp.height * scale);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(bmp, 0, 0, w, h);
+  const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', quality));
+  if (!blob) throw new Error('照片壓縮失敗');
+  return blob;
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result).split(',')[1]);
+    fr.onerror = () => reject(new Error('讀取照片失敗'));
+    fr.readAsDataURL(blob);
+  });
+}
+
+function photoButtonsHtml() {
+  // 新版 Android 相片選擇器沒有相機選項，拍照要另一個加 capture 的按鈕
+  return '<div class="row" style="margin-top:10px"><button type="button" class="primary" id="pCamBtn">📷 拍照</button>' +
+    '<button type="button" id="pLibBtn">🖼 從相簿選</button></div>' +
+    '<input id="pCam" type="file" accept="image/*" capture="environment" hidden>' +
+    '<input id="pLib" type="file" accept="image/*" multiple hidden>';
+}
+
+function bindPhotoButtons(type, key) {
+  $('#pCamBtn').onclick = () => $('#pCam').click();
+  $('#pLibBtn').onclick = () => $('#pLib').click();
+  const onPick = async (ev) => {
+    const files = [...ev.target.files];
+    ev.target.value = '';
+    for (const f of files) await uploadOne(type, key, f);
+    loadPhotos(type, key);
+  };
+  $('#pCam').onchange = onPick;
+  $('#pLib').onchange = onPick;
+}
+
+/** 上傳一張：成功才算數；失敗顯示原因與重試按鈕，不會留下紀錄。 */
+async function uploadOne(type, key, file) {
+  const li = document.createElement('li');
+  li.className = 'meta';
+  $('#upList').appendChild(li);
+  const show = (text, retry) => {
+    li.innerHTML = esc(file.name) + '：' + text + (retry ? ' <button type="button">重試</button>' : '');
+    if (retry) li.querySelector('button').onclick = async () => { li.remove(); await uploadOne(type, key, file); loadPhotos(type, key); };
+  };
+  try {
+    show('處理中…');
+    const takenAt = await readExifDate(file);
+    const blob = await compressImage(file);
+    show('上傳中…（' + Math.round(blob.size / 1024) + ' KB）');
+    const rec = await api('photo.upload', {
+      type, key, purpose: '建檔', base64: await blobToBase64(blob), takenAt, originalName: file.name,
+    });
+    show('✔ 已存為 ' + esc(rec['檔名']) + (rec['拍攝時間'] ? '，拍攝 ' + esc(rec['拍攝時間']) : '，讀不到拍攝時間'));
+    const cache = state.assets && state.assets[type];
+    if (cache) {
+      const k = type + ':' + key;
+      cache.photoCounts = cache.photoCounts || {};
+      cache.photoCounts[k] = cache.photoCounts[k] || {};
+      cache.photoCounts[k]['建檔'] = (cache.photoCounts[k]['建檔'] || 0) + 1;
+    }
+  } catch (e) {
+    show('<span style="color:var(--bad)">✖ ' + esc(e.message) + '（沒有存檔）</span>', e.code !== 'DUPLICATE');
+  }
+}
+
+const photoCache = {};
+
+async function photoSrc(id) {
+  if (!photoCache[id]) photoCache[id] = api('photo.get', { id }).then((r) => 'data:image/jpeg;base64,' + r.base64);
+  return photoCache[id];
+}
+
+async function loadPhotos(type, key) {
+  const box = $('#photoBox');
+  if (!box) return;
+  let list;
+  try {
+    list = (await api('photo.list', { type, key })).filter((p) => p['用途'] === '建檔');
+  } catch (e) {
+    box.innerHTML = '<p>' + esc(e.message) + '</p>';
+    return;
+  }
+  if (!list.length) { box.innerHTML = '<p class="muted">還沒有建檔照片。</p>'; return; }
+  box.innerHTML = '<div class="thumbs">' + list.map((p, i) => '<button type="button" class="thumb" data-i="' + i + '">' +
+    '<img alt="' + esc(p['檔名']) + '"><span>' + esc((p['拍攝時間'] || p['上傳時間']).slice(0, 10)) + '</span></button>').join('') + '</div>';
+  box.querySelectorAll('.thumb').forEach((b) => {
+    const p = list[Number(b.dataset.i)];
+    photoSrc(p['照片編號']).then((src) => { b.querySelector('img').src = src; }).catch(() => { b.querySelector('span').textContent = '讀取失敗'; });
+    b.onclick = () => showPhoto(type, key, p);
+  });
+}
+
+function showPhoto(type, key, p) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  const canVoid = can(state.me.role, 'photo.upload');
+  form.innerHTML = '<img class="photo-full" alt="' + esc(p['檔名']) + '">' +
+    '<div class="meta">' + esc(p['檔名']) + '｜拍攝 ' + esc(p['拍攝時間'] || '不明') + '｜上傳 ' + esc(p['上傳時間']) + ' ' +
+    esc(p['上傳者']) + (p['原始檔名'] ? '｜原檔 ' + esc(p['原始檔名']) : '') + '</div>' +
+    (canVoid ? '<label for="vReason">作廢原因（拍錯、模糊等；檔案仍保留在雲端與 NAS）</label><input id="vReason">' : '') +
+    '<div class="row" style="margin-top:12px;justify-content:flex-end">' +
+    (canVoid ? '<button type="button" id="vGo">作廢這張</button>' : '') + '<button value="cancel">關閉</button></div>';
+  photoSrc(p['照片編號']).then((src) => { form.querySelector('img').src = src; });
+  if (canVoid) {
+    $('#vGo').onclick = async (ev) => {
+      if (!$('#vReason').value.trim()) { toast('請填寫作廢原因', true); return; }
+      ev.target.disabled = true;
+      try {
+        await api('photo.void', { id: p['照片編號'], reason: $('#vReason').value });
+        dlg.close();
+        toast('已作廢');
+        const cache = state.assets && state.assets[type];
+        const c = cache && cache.photoCounts && cache.photoCounts[type + ':' + key];
+        if (c && c['建檔']) c['建檔']--;
+        loadPhotos(type, key);
+      } catch (e) {
+        ev.target.disabled = false;
+        toast(e.message, true);
+      }
+    };
+  }
+  dlg.showModal();
+}
+
 // ----- 資產清單 -----
 
 const LIST_PAGE = 100;
@@ -455,6 +637,8 @@ function renderAssetList(type, data, ui) {
     sel('fDept', '部門代號', distinctValues(rows, '部門代號'), '<option value="">部門：不限</option>') +
     sel('fCust', '保管人代號', distinctValues(rows, '保管人代號'), '<option value="">保管人：不限</option>') +
     sel('fLoc', '位置', distinctValues(rows, '位置'), '<option value="">位置（實際）：不限</option>') +
+    sel('fPhoto', '建檔照片', [{ value: '有', label: '建檔照片：已拍' }, { value: '缺', label: '建檔照片：未拍' }],
+      '<option value="">建檔照片：不限</option>') +
     sel('fOpen', '開放借用', [{ value: '可借', label: '現在可借' }, { value: '是', label: '開放借用：是' }, { value: '否', label: '開放借用：否' }],
       '<option value="">開放借用：不限</option>') +
     '<label class="radio"><input type="checkbox" data-c="已移位"' + (f['已移位'] ? ' checked' : '') + '> 只看實際位置和清冊不同</label>' +
@@ -474,7 +658,7 @@ function renderAssetList(type, data, ui) {
 }
 
 function drawAssetResults(type, data, ui) {
-  const list = filterAssets(type, data.rows, ui.f, state.me.email);
+  const list = filterAssets(type, data.rows, ui.f, state.me.email, data.photoCounts);
   const canEdit = can(state.me.role, 'asset.edit');
   const prefix = type === 'FIXED' ? 'F' : 'C';
   const items = list.slice(0, ui.shown).map((r) => {
@@ -484,11 +668,13 @@ function drawAssetResults(type, data, ui) {
       ? [locationText(r), r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
       : [r['帳面數量'] + ' ' + (r['單位'] || ''), r['保管人姓名'] || r['保管人代號'], locationText(r) || r['部門代號']];
     const mgr = managerLabel(r['經管人'], data.managers);
+    const nPhoto = ((data.photoCounts || {})[type + ':' + assetKey(type, r)] || {})['建檔'] || 0;
     return '<li class="asset-item">' +
       (canEdit ? '<input type="checkbox" data-k="' + esc(k) + '" data-v="' + esc(r['版本']) + '"' + (ui.selected.has(k) ? ' checked' : '') + ' aria-label="勾選">' : '') +
       '<a href="#/asset/' + prefix + '/' + encodeURIComponent(assetKey(type, r)) + '"><div><strong>' + esc(assetName(type, r)) + '</strong></div>' +
       '<div class="meta">' + esc(assetKey(type, r)) + '｜' + meta.filter(Boolean).map(esc).join('｜') + '</div>' +
-      '<div class="row chips">' + statusChips(r) + (mgr ? '<span class="chip">經管：' + esc(mgr) + '</span>' : '') + '</div></a></li>';
+      '<div class="row chips">' + statusChips(r) + (mgr ? '<span class="chip">經管：' + esc(mgr) + '</span>' : '') +
+      (nPhoto ? '<span class="chip">建檔照片 ' + nPhoto + '</span>' : '') + '</div></a></li>';
   }).join('');
 
   $('#lResult').innerHTML = '<div class="row spread meta" style="margin:4px 2px 8px"><span>共 ' + list.length + ' 筆' +
