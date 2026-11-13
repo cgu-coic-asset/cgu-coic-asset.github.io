@@ -54,6 +54,20 @@ function assetKey(type, row) {
   return String(row[ASSET_TYPES[type].keyField] || '');
 }
 
+/** 下一個 6 位數短碼（保管品 QR 用），接續最大值。 */
+function nextShortCode(existing) {
+  let max = 0;
+  (existing || []).forEach(function (c) {
+    if (/^\d{6}$/.test(String(c || '')) && parseInt(c, 10) > max) max = parseInt(c, 10);
+  });
+  return ('000000' + (max + 1)).slice(-6);
+}
+
+/** QR 網址用的鍵：保管品有 QR碼 就用短碼，其他用一般的鍵。 */
+function qrKey(type, row) {
+  return (type === 'CUSTODY' && String(row['QR碼'] || '')) || assetKey(type, row);
+}
+
 /** 實際位置：有填目前位置就用它，否則用清冊的存放位置。 */
 function currentLocation(row) {
   return String(row['目前位置'] || '').trim() || String(row['存放位置'] || '');
@@ -141,6 +155,6 @@ function distinctValues(rows, field) {
 if (typeof module !== 'undefined') {
   module.exports = {
     ASSET_EDITABLE, ITEM_EDITABLE, editableFields, ASSET_OPEN_VALUES, ASSET_BATCH_FIELDS, assetStatus, isLendable, isMoved, displaySerial, assetKey,
-    assetName, sourceName, replaceNameFix, currentLocation, filterAssets, distinctValues,
+    nextShortCode, qrKey, assetName, sourceName, replaceNameFix, currentLocation, filterAssets, distinctValues,
   };
 }

@@ -8,6 +8,7 @@
 if (typeof module !== 'undefined' && typeof ASSET_TYPES === 'undefined') {
   var ASSET_TYPES = require('./types.js').ASSET_TYPES;
   var assetName = require('./assetList.js').assetName;
+  var qrKey = require('./assetList.js').qrKey;
 }
 
 var LABEL_COLUMNS = ['QR網址', '黑框', '編號', 'NAME1', 'NAME2', '保管人'];
@@ -99,8 +100,7 @@ function labelRow(qrBase, type, row, managerName, widths) {
     code = type === 'FIXED' ? row['資產編號'] : row['材料編號'];
     name = assetName(type, row);
   }
-  const key = row[ASSET_TYPES[type].keyField];
-  const head = [labelUrl(qrBase, type, key), box, code || ''];
+  const head = [labelUrl(qrBase, type, qrKey(type, row)), box, code || ''];
   if (widths && widths.length === 1) return head.concat([fitLabelName(name, widths[0]), custodian]);
   const names = splitLabelName(name, widths && widths[0], widths && widths[1]);
   return head.concat([names[0], names[1], custodian]);

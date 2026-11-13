@@ -58,6 +58,12 @@ test('CSV：BOM、逗號、引號跳脫、CRLF', () => {
   assert.strictEqual(csv, '﻿a,"b,c","d""e"\r\n1,,中\r\n');
 });
 
+test('保管品 QR 用短碼，編號只印材料編號', () => {
+  const r = labelRow(BASE, 'CUSTODY', { 保管品鍵: 'D000000256-CMPDDUD24044701', QR碼: '000017', 材料編號: 'CMPDDUD24044701', 品名規格: 'SSD', 部門代號: 'D000' }, null, [32]);
+  assert.strictEqual(r[0], BASE + '?C000017');
+  assert.strictEqual(r[2], 'CMPDDUD24044701');
+});
+
 test('固定資產黑框：有系所編號就用它，沒有用部門代號', () => {
   const cb = labelRow(BASE, 'FIXED', { 資產編號: '9K60900089', 資產名稱: 'Chromebook', 部門代號: 'D100', 系所編號: 'CB-001' }, null, [32]);
   assert.strictEqual(cb[1], 'CB-001');

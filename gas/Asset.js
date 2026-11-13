@@ -29,14 +29,15 @@ function assetList_(payload) {
 function assetGet_(payload) {
   const t = importTarget_(payload.type);
   const key = String(payload.key || '');
-  const field = ASSET_TYPES[payload.type].keyField;
+  // 保管品貼紙的 QR 用 6 位數短碼
+  const field = payload.type === 'CUSTODY' && /^\d{6}$/.test(key) ? 'QR碼' : ASSET_TYPES[payload.type].keyField;
   let rows = readRows_(schemaSheet_(t.book, t.sheet)).filter(function (r) { return r[field] === key; });
   if (!rows.length) throw new AppError('NOT_FOUND', '找不到 ' + key);
   rows.sort(function (a, b) { return Number(a['增值次數'] || 0) - Number(b['增值次數'] || 0); });
   rows = rows.map(publicRow_);
   const out = { managers: activeManagers_() };
   if (payload.type === 'ITEM') rows = joinItemsWithCustody_(rows);
-  if (payload.type === 'CUSTODY') out.items = joinItemsWithCustody_(itemsOfCustody_(key));
+  if (payload.type === 'CUSTODY') out.items = joinItemsWithCustody_(itemsOfCustody_(rows[0]['保管品鍵']));
   if (payload.type === 'FIXED') {
     out.items = readRows_(itemSheet_()).filter(function (r) { return r['資產編號'] === key && assetStatus(r) !== '報廢'; }).map(publicRow_);
   }
@@ -161,4 +162,24 @@ function assetReplaceName_(payload, actor) {
     writeLogs_(actor, logs, payload.reason || '名稱取代：' + find + ' → ' + (payload.replace || '（刪除）'), '網頁');
   }
   return { updated: logs.length };
+}
+
+/** 保管品還沒有 QR碼 的補上 6 位數短碼（匯出貼紙前呼叫）。回傳 { assigned }。 */
+function assetEnsureQr_(payload, actor) {
+  const t = importTarget_('CUSTODY');
+  const sh = targetSheet_(t);
+  const existing = readRows_(sh);
+  const codes = existing.map(function (r) { return r['QR碼']; });
+  let assigned = 0;
+  existing.forEach(function (r) {
+    if (r['QR碼']) return;
+    r['QR碼'] = nextShortCode(codes);
+    codes.push(r['QR碼']);
+    assigned++;
+  });
+  if (assigned) {
+    writeAllRows_(sh, existing, []);
+    writeLog_(actor, '產生QR碼', t.label, '', '', { 筆數: assigned }, '保管品貼紙 QR 短碼');
+  }
+  return { assigned: assigned };
 }

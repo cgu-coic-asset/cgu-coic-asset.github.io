@@ -4,7 +4,7 @@
  * 前端一律用 POST，內容為 JSON：{ action, idToken?, payload? }。
  */
 
-const APP_VERSION = '0.8.2';
+const APP_VERSION = '0.8.3';
 
 function doGet() {
   return json_({ ok: true, app: '資產管理系統', version: APP_VERSION, time: new Date().toISOString() });

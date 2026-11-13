@@ -99,10 +99,15 @@ function importCommit_(payload, actor) {
     stamp(row);
     logs.push(['匯入消失', m.key, { 來源狀態: SOURCE_OK }, { 來源狀態: SOURCE_MISSING }]);
   });
+  const qrCodes = existing.map(function (r) { return r['QR碼']; });
   const newRows = diff.added.map(function (r) {
     const row = stampNew(Object.assign({}, r, {
       '狀態': '在庫', '開放借用': '否', '來源狀態': SOURCE_OK, '最後匯入批次': batchId,
     }), actor.email, nowText);
+    if (payload.type === 'CUSTODY') {
+      row['QR碼'] = nextShortCode(qrCodes);
+      qrCodes.push(row['QR碼']);
+    }
     logs.push(['匯入新增', importRowKey(payload.type, r), '', r]);
     return row;
   });

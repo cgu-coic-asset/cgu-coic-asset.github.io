@@ -1,6 +1,6 @@
 /**
  * 資產管理系統前端。
- * 網址：QR 貼紙為 /?F<資產編號> 或 /?C<保管品鍵>，載入時轉成內部路由 #/asset/F/<編號>。
+ * 網址：QR 貼紙為 /?F<資產編號>、/?C<保管品 6 位數 QR碼>、/?I<物品ID>，載入時轉成內部路由 #/asset/F/<編號>。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -340,7 +340,7 @@ function renderAssetDetail(view, type, rows, managers, pieces) {
       kv('目前位置', esc(main['目前位置'])) + kv('開放借用', esc(main['開放借用'] || '否')) +
       kv('最近盤點', esc(fmtDate(main['最近盤點日']) + ' ' + (main['最近盤點結果'] || ''))) + kv('備註', esc(main['備註']));
   } else {
-    table = (main['名稱修正'] ? kv('學校清冊名稱', esc(main['品名規格'])) : '') + kv('保管品鍵', esc(main['保管品鍵'])) + kv('材料編號', esc(main['材料編號'])) +
+    table = (main['名稱修正'] ? kv('學校清冊名稱', esc(main['品名規格'])) : '') + kv('材料編號', '<strong>' + esc(main['材料編號']) + '</strong>') +
       kv('帳面數量', esc(main['帳面數量'] + ' ' + (main['單位'] || ''))) + kv('部門', esc(main['部門代號'])) +
       kv('保管人', custodian) + kv('經管人', esc(managerLabel(main['經管人'], managers))) +
       locationRows(main, kv) + kv('開放借用', esc(main['開放借用'] || '否')) + kv('來源最後異動日', fmtDate(main['來源最後異動日'])) +
@@ -701,7 +701,7 @@ function drawAssetResults(type, data, ui) {
       ? [assetKey(type, r), locationText(r), r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
       : type === 'ITEM'
         ? [r['規格'], r['材料編號'] || r['資產編號'] || '無帳', r['目前位置'], r['保管人姓名']]
-        : [assetKey(type, r), r['帳面數量'] + ' ' + (r['單位'] || '') + (stats ? '（單件 ' + stats['件數'] + '，借出 ' + stats['借出'] + '）' : ''),
+        : [r['材料編號'], r['帳面數量'] + ' ' + (r['單位'] || '') + (stats ? '（單件 ' + stats['件數'] + '，借出 ' + stats['借出'] + '）' : ''),
           r['保管人姓名'] || r['保管人代號'], locationText(r) || r['部門代號']];
     const title = type === 'ITEM'
       ? '<span class="code">' + esc(r['系所編號'] || '未編號') + '</span> ' + esc(r['名稱'])
@@ -843,6 +843,20 @@ function drawAssetResults(type, data, ui) {
  */
 async function exportLabels(type, data, rows) {
   if (!rows.length) { toast('沒有要匯出的資料', true); return; }
+  if (type === 'CUSTODY' && rows.some((r) => !r['QR碼'])) {
+    // 保管品鍵太長，QR 改用 6 位數短碼；還沒有的先請後端補上
+    try {
+      await api('asset.ensureQr', {});
+      const fresh = await loadAssets(type, true);
+      const byKey = {};
+      fresh.rows.forEach((r) => { byKey[r['保管品鍵']] = r; });
+      rows = rows.map((r) => byKey[r['保管品鍵']] || r);
+      data = fresh;
+    } catch (e) {
+      toast(e.message, true);
+      return;
+    }
+  }
   try {
     if (!window.XLSX) await loadScript(SHEETJS_URL);
   } catch (e) {

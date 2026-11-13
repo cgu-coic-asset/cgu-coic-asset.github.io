@@ -114,3 +114,12 @@ test('名稱修正：畫面用修正後的名稱；取代文字', () => {
   assert.strictEqual(rf('FIXED', Object.assign({}, r, { 名稱修正: fixed }), '周邊系統', '周邊 統'), '');
   assert.strictEqual(n('ITEM', { 名稱: 'HDMI', 名稱修正: 'x' }), 'HDMI');
 });
+
+test('保管品 QR 短碼：6 位數接續；有短碼就用短碼', () => {
+  const { nextShortCode: n, qrKey: q } = require('./assetList.js');
+  assert.strictEqual(n([]), '000001');
+  assert.strictEqual(n(['000009', '', 'x', '000002']), '000010');
+  assert.strictEqual(q('CUSTODY', { 保管品鍵: 'D000000256-CMPDDUD24044701', QR碼: '000123' }), '000123');
+  assert.strictEqual(q('CUSTODY', { 保管品鍵: 'D000000256-A1' }), 'D000000256-A1');
+  assert.strictEqual(q('FIXED', { 資產編號: '0351360284' }), '0351360284');
+});
