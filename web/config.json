@@ -1,4 +1,5 @@
 {
   "apiUrl": "https://script.google.com/macros/s/AKfycbwatvrslzHPHJJWMFtiLkP7P-10L1vNJM2nIj2kcTC9Gj5wl5AcsRDTFJwbscYflP2M0w/exec",
-  "clientId": "807576907591-mcm8pl3h5q3jvvmht7fvtahvmoe63eaq.apps.googleusercontent.com"
+  "clientId": "807576907591-mcm8pl3h5q3jvvmht7fvtahvmoe63eaq.apps.googleusercontent.com",
+  "qrBase": "https://cgu-coic-asset.github.io/"
 }

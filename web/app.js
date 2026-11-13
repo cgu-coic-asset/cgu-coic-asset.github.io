@@ -717,7 +717,8 @@ function drawAssetResults(type, data, ui) {
 
   $('#lResult').innerHTML = '<div class="row spread meta" style="margin:4px 2px 8px"><span>共 ' + list.length + ' 筆' +
     (canEdit ? '，已勾選 <strong id="selCount">' + ui.selected.size + '</strong> 筆' : '') + '</span>' +
-    (canEdit ? '<span class="row"><button type="button" id="selAll">全選篩選結果</button><button type="button" id="selNone">清除勾選</button></span>' : '') +
+    '<span class="row">' + (canEdit ? '<button type="button" id="selAll">全選篩選結果</button><button type="button" id="selNone">清除勾選</button>' : '') +
+    '<button type="button" id="lLabels" title="勾選的；沒勾選就是目前篩選結果">匯出貼紙 CSV</button></span>' +
     '</div><div class="card"><ul class="list">' + (items || '<li class="muted">沒有符合的資料</li>') + '</ul>' +
     (list.length > ui.shown ? '<div class="center" style="margin-top:8px"><button type="button" id="lMore">再顯示 ' +
       Math.min(LIST_PAGE, list.length - ui.shown) + ' 筆（還有 ' + (list.length - ui.shown) + '）</button></div>' : '') + '</div>' +
@@ -727,6 +728,9 @@ function drawAssetResults(type, data, ui) {
       '</select><span id="bValueBox" class="grow"></span><button class="primary" type="button" id="bGo">套用</button></div>' : '');
 
   if ($('#lMore')) $('#lMore').onclick = () => { ui.shown += LIST_PAGE; drawAssetResults(type, data, ui); };
+  $('#lLabels').onclick = () => exportLabels(type, data, ui.selected.size
+    ? list.concat(data.rows).filter((r, i, a) => ui.selected.has(importRowKey(type, r)) && a.indexOf(r) === i)
+    : list);
   if (!canEdit) return;
   const versions = {};
   data.rows.forEach((r) => { versions[importRowKey(type, r)] = r['版本']; });
@@ -808,6 +812,28 @@ function drawAssetResults(type, data, ui) {
     }
     renderAssetList(type, state.assets[type], ui);
   };
+}
+
+// ----- 貼紙 -----
+
+/** 匯出 BarTender 用的貼紙 CSV（QR 由 BarTender 產生）。 */
+function exportLabels(type, data, rows) {
+  if (!rows.length) { toast('沒有要匯出的資料', true); return; }
+  const qrBase = state.config.qrBase || (location.origin + '/');
+  const nameOf = (email) => managerLabel(email, data.managers);
+  const body = [LABEL_COLUMNS].concat(rows.map((r) => labelRow(qrBase, type, r, nameOf)));
+  const blob = new Blob([toCsv(body)], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  const d = new Date();
+  const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
+  a.href = URL.createObjectURL(blob);
+  a.download = '貼紙_' + ASSET_TYPES[type].label + '_' + ymd + '_' + rows.length + '筆.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  const noCode = type === 'ITEM' ? rows.filter((r) => !r['系所編號']).length : 0;
+  toast('已匯出 ' + rows.length + ' 筆' + (noCode ? '（其中 ' + noCode + ' 筆還沒有系所編號）' : ''), noCode > 0);
 }
 
 // ----- 系所物品 -----
