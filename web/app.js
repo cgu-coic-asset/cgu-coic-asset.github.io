@@ -314,7 +314,11 @@ function renderAssetDetail(view, type, rows, managers, pieces) {
   const custodian = esc(main['保管人代號']) + ' ' + esc(main['保管人姓名']);
   let table;
   if (type === 'FIXED') {
-    table = kv('資產編號', esc(main['資產編號'])) + kv('廠牌規格', esc(main['廠牌規格'])) +
+    const linked = (pieces || [])[0];
+    table = kv('資產編號', esc(main['資產編號'])) +
+      (linked ? kv('系所編號', '<a class="code" href="#/asset/I/' + encodeURIComponent(linked['物品ID']) + '">' +
+        esc(linked['系所編號'] || linked['物品ID']) + '</a>（系所借用）') : '') +
+      kv('廠牌規格', esc(main['廠牌規格'])) +
       kv(serial.isPurchaseNo ? '請購案號（無產品序號）' : '產品序號', esc(serial.text)) +
       (serial.isPurchaseNo ? '' : kv('請購案號', esc(main['請購案號']))) +
       kv('部門', esc(main['部門代號'])) + locationRows(main, kv) + kv('保管人', custodian) +
@@ -326,10 +330,12 @@ function renderAssetDetail(view, type, rows, managers, pieces) {
       kv('備註', esc(main['備註']));
   } else if (type === 'ITEM') {
     const link = main['保管品鍵']
-      ? '<a href="#/asset/C/' + encodeURIComponent(main['保管品鍵']) + '">' + esc(main['材料編號'] || main['保管品鍵']) + '</a> ' + esc(main['保管品名稱'] || '')
-      : '無帳物品（不在學校清冊）';
+      ? '保管品 <a href="#/asset/C/' + encodeURIComponent(main['保管品鍵']) + '">' + esc(main['材料編號'] || main['保管品鍵']) + '</a> ' + esc(main['保管品名稱'] || '')
+      : main['資產編號']
+        ? '固定資產 <a href="#/asset/F/' + encodeURIComponent(main['資產編號']) + '">' + esc(main['資產編號']) + '</a> ' + esc(main['資產名稱'] || '')
+        : '無帳物品（不在學校清冊）';
     table = kv('系所編號', '<strong>' + esc(main['系所編號'] || '（未編號）') + '</strong>') + kv('物品ID', esc(main['物品ID'])) +
-      kv('規格', esc(main['規格'])) + kv('對應保管品', link) + kv('部門', esc(main['部門代號'])) +
+      kv('規格', esc(main['規格'])) + kv('對應', link) + kv('部門', esc(main['部門代號'])) +
       (main['保管人代號'] ? kv('保管人', custodian) : '') + kv('經管人', esc(managerLabel(main['經管人'], managers))) +
       kv('目前位置', esc(main['目前位置'])) + kv('開放借用', esc(main['開放借用'] || '否')) +
       kv('最近盤點', esc(fmtDate(main['最近盤點日']) + ' ' + (main['最近盤點結果'] || ''))) + kv('備註', esc(main['備註']));
@@ -693,12 +699,12 @@ function drawAssetResults(type, data, ui) {
     const meta = type === 'FIXED'
       ? [assetKey(type, r), locationText(r), r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
       : type === 'ITEM'
-        ? [r['規格'], r['材料編號'] || '無帳', r['目前位置'], r['保管人姓名']]
+        ? [r['規格'], r['材料編號'] || r['資產編號'] || '無帳', r['目前位置'], r['保管人姓名']]
         : [assetKey(type, r), r['帳面數量'] + ' ' + (r['單位'] || '') + (stats ? '（單件 ' + stats['件數'] + '，借出 ' + stats['借出'] + '）' : ''),
           r['保管人姓名'] || r['保管人代號'], locationText(r) || r['部門代號']];
     const title = type === 'ITEM'
       ? '<span class="code">' + esc(r['系所編號'] || '未編號') + '</span> ' + esc(r['名稱'])
-      : esc(assetName(type, r));
+      : (type === 'FIXED' && r['系所編號'] ? '<span class="code">' + esc(r['系所編號']) + '</span> ' : '') + esc(assetName(type, r));
     const mgr = managerLabel(r['經管人'], data.managers);
     const nPhoto = ((data.photoCounts || {})[type + ':' + assetKey(type, r)] || {})['建檔'] || 0;
     return '<li class="asset-item">' +
@@ -716,7 +722,7 @@ function drawAssetResults(type, data, ui) {
     (list.length > ui.shown ? '<div class="center" style="margin-top:8px"><button type="button" id="lMore">再顯示 ' +
       Math.min(LIST_PAGE, list.length - ui.shown) + ' 筆（還有 ' + (list.length - ui.shown) + '）</button></div>' : '') + '</div>' +
     (canEdit ? '<div class="batchbar" id="batchBar"' + (ui.selected.size ? '' : ' hidden') + '>' +
-      '<select id="bField" aria-label="要改的欄位">' + (type === 'ITEM' ? ['系所編號'] : []).concat(ASSET_BATCH_FIELDS)
+      '<select id="bField" aria-label="要改的欄位">' + (type === 'ITEM' ? ['系所編號'] : type === 'FIXED' ? ['建立系所物品'] : []).concat(ASSET_BATCH_FIELDS)
         .map((x) => '<option' + (x === ui.batchField ? ' selected' : '') + '>' + x + '</option>').join('') +
       '</select><span id="bValueBox" class="grow"></span><button class="primary" type="button" id="bGo">套用</button></div>' : '');
 
@@ -735,8 +741,9 @@ function drawAssetResults(type, data, ui) {
   $('#selNone').onclick = () => { ui.selected.clear(); drawAssetResults(type, data, ui); };
   const fillValues = () => {
     ui.batchField = $('#bField').value;
-    if (ui.batchField === '系所編號') {
-      $('#bValueBox').innerHTML = '<input id="bValue" placeholder="前綴，例 COIC、NX2（依勾選順序接續編號）" autocomplete="off">';
+    if (ui.batchField === '系所編號' || ui.batchField === '建立系所物品') {
+      $('#bValueBox').innerHTML = '<input id="bValue" placeholder="前綴，例 COIC、CB（依勾選順序接續編號' +
+        (ui.batchField === '建立系所物品' ? '；留空之後再編' : '') + '）" autocomplete="off">';
       return;
     }
     if (ui.batchField === '目前位置') {
@@ -757,6 +764,20 @@ function drawAssetResults(type, data, ui) {
     const shown = field === '經管人' ? (value ? managerLabel(value, data.managers) : '（取消）')
       : field === '目前位置' && !value.trim() ? '（回到清冊位置）' : value;
     ev.target.disabled = true;
+    if (field === '建立系所物品') {
+      // 固定資產給學生借（例：Chromebook）：一對一建立系所物品，借還時會同步這件固定資產
+      try {
+        const rows = await api('item.fromFixed', { prefix: value, codes: [...ui.selected] });
+        toast('已建立 ' + rows.length + ' 件系所物品' + (rows[0]['系所編號'] ? '（' + rows[0]['系所編號'] + ' 起）' : ''));
+        ui.selected.clear();
+        if (state.assets) delete state.assets.ITEM;
+        await loadAssets(type, true);
+      } catch (e) {
+        toast(e.message, true);
+      }
+      renderAssetList(type, state.assets[type], ui);
+      return;
+    }
     if (field === '系所編號') {
       const keys = [...ui.selected];
       const already = keys.filter((k) => (data.rows.find((r) => r['物品ID'] === k) || {})['系所編號']).length;

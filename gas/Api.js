@@ -18,6 +18,7 @@ function actions_() {
     'my.assets': { perm: 'self.view', handler: myAssets_ },
     'item.create': { perm: 'asset.edit', write: true, handler: itemCreate_ },
     'item.fromCustody': { perm: 'asset.edit', write: true, handler: itemFromCustody_ },
+    'item.fromFixed': { perm: 'asset.edit', write: true, handler: itemFromFixed_ },
     'item.number': { perm: 'asset.edit', write: true, handler: itemNumber_ },
     'photo.upload': { perm: 'photo.upload', write: true, handler: photoUpload_ },
     'photo.list': { perm: 'asset.view', handler: photoList_ },

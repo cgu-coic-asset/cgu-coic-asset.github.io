@@ -17,6 +17,10 @@ function assetList_(payload) {
   const out = { managers: activeManagers_(), photoCounts: photoCountsAll_() };
   if (payload.type === 'ITEM') rows = joinItemsWithCustody_(rows);
   if (payload.type === 'CUSTODY') out.itemStats = itemStatsByCustody_();
+  if (payload.type === 'FIXED') {
+    const codes = itemCodesByFixed_();
+    rows.forEach(function (r) { if (codes[r['資產編號']]) r['系所編號'] = codes[r['資產編號']]; });
+  }
   out.rows = rows;
   return out;
 }
@@ -33,6 +37,9 @@ function assetGet_(payload) {
   const out = { managers: activeManagers_() };
   if (payload.type === 'ITEM') rows = joinItemsWithCustody_(rows);
   if (payload.type === 'CUSTODY') out.items = joinItemsWithCustody_(itemsOfCustody_(key));
+  if (payload.type === 'FIXED') {
+    out.items = readRows_(itemSheet_()).filter(function (r) { return r['資產編號'] === key && assetStatus(r) !== '報廢'; }).map(publicRow_);
+  }
   out.rows = rows;
   return out;
 }
