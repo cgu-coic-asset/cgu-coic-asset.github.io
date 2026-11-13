@@ -3,9 +3,15 @@
  */
 
 function book_(key) {
-  const id = PropertiesService.getScriptProperties().getProperty('SHEET_' + key);
-  if (!id) throw new AppError('NOT_CONFIGURED', '尚未執行 setup()：找不到 ' + key);
-  return SpreadsheetApp.openById(id);
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('SHEET_' + key);
+  if (id) return SpreadsheetApp.openById(id);
+  // 之後才新增的試算表（例：系所物品）第一次用到時自動建立，不必重跑 setup()
+  const dataFolderId = props.getProperty('FOLDER_DATA');
+  if (!SCHEMA[key] || !dataFolderId) throw new AppError('NOT_CONFIGURED', '尚未執行 setup()：找不到 ' + key);
+  const ss = ensureSpreadsheet_(props, 'SHEET_' + key, SCHEMA[key].name, DriveApp.getFolderById(dataFolderId), []);
+  ensureSheets_(ss, SCHEMA[key].sheets, []);
+  return ss;
 }
 
 function sheet_(bookKey, name) {

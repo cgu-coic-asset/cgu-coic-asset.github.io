@@ -92,3 +92,13 @@ test('篩選選單的值', () => {
   assert.deepStrictEqual(distinctValues(rows, '部門代號').map((v) => v.value), ['D000', 'D100']);
   assert.deepStrictEqual(distinctValues(rows, '保管人代號').map((v) => v.label), ['D000000001 甲', 'D000000002 乙']);
 });
+
+test('系所物品：鍵為物品ID、可改名稱與系所編號、搜尋得到系所編號', () => {
+  const { assetKey: k, assetName: n, editableFields: e } = require('./assetList.js');
+  const item = { 物品ID: 'I000001', 系所編號: 'NX2-008', 名稱: 'HDMI 線', 規格: '3M' };
+  assert.strictEqual(k('ITEM', item), 'I000001');
+  assert.strictEqual(n('ITEM', item), 'HDMI 線');
+  assert.ok(e('ITEM').includes('系所編號'));
+  assert.ok(!e('FIXED').includes('系所編號'));
+  assert.strictEqual(filterAssets('ITEM', [item], { q: 'nx2-008' }).length, 1);
+});

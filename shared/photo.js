@@ -4,20 +4,24 @@
  * 換帳號時靠路徑重新對應，不依賴雲端硬碟的檔案 ID（檔案ID 欄只是加速用）。
  */
 
+if (typeof module !== 'undefined' && typeof ASSET_TYPES === 'undefined') {
+  var ASSET_TYPES = require('./types.js').ASSET_TYPES;
+}
+
 /** 照片用途。建檔：設備最初的樣子；盤點、借出、歸還由各流程使用。 */
 var PHOTO_PURPOSES = ['建檔', '盤點', '借出', '歸還'];
 var PHOTO_MAX_BYTES = 2 * 1024 * 1024;
 var PHOTO_ACTIVE = '有效';
 var PHOTO_VOID = '作廢';
 
-/** 照片歸屬的鍵：固定資產用資產編號（增值紀錄共用），保管品用保管品鍵。 */
+/** 照片歸屬的鍵：固定資產用資產編號（增值紀錄共用），保管品用保管品鍵，系所物品用物品ID。 */
 function photoAssetKey(type, row) {
-  return type === 'FIXED' ? String(row['資產編號'] || '') : String(row['保管品鍵'] || '');
+  return String(row[ASSET_TYPES[type].keyField] || '');
 }
 
 /** 雲端路徑（資料夾名稱陣列，從「照片」下一層開始）。 */
 function photoFolderPath(type, key) {
-  return [type === 'FIXED' ? '固定資產' : '保管品', String(key)];
+  return [ASSET_TYPES[type].photoFolder, String(key)];
 }
 
 /** 下一個序號：同一資產、同用途、同日期已有的最大序號＋1。names：該資產已有的檔名。 */

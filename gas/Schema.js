@@ -49,6 +49,16 @@ const SCHEMA = {
       '匯入批次': IMPORT_BATCH_COLUMNS,
     },
   },
+  // 系所物品：可借用的單件（保管品的單件或無帳物品），系所自建
+  ITEM: {
+    name: '系所物品',
+    sheets: {
+      '物品': [
+        '物品ID', '系所編號', '名稱', '規格', '保管品鍵', '部門代號', '狀態', '開放借用', '經管人', '目前位置',
+        '最近盤點日', '最近盤點結果', '備註',
+      ].concat(COMMON_COLUMNS),
+    },
+  },
   OPS: {
     name: '作業',
     sheets: {
@@ -83,6 +93,7 @@ const FOLDERS = [
   { key: 'PHOTOS', parent: 'ROOT', name: '照片' },
   { key: 'PHOTOS_FIXED', parent: 'PHOTOS', name: '固定資產' },
   { key: 'PHOTOS_CUSTODY', parent: 'PHOTOS', name: '保管品' },
+  { key: 'PHOTOS_ITEM', parent: 'PHOTOS', name: '系所物品' },
   { key: 'LOANS', parent: 'ROOT', name: '借用' },
   { key: 'IMPORTS', parent: 'ROOT', name: '匯入檔' },
   { key: 'BACKUPS', parent: 'ROOT', name: '備份' },

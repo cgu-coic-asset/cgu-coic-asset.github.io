@@ -2,11 +2,21 @@
  * 資產清單：顯示、搜尋、篩選（純邏輯，前後端共用）。
  */
 
+if (typeof module !== 'undefined' && typeof ASSET_TYPES === 'undefined') {
+  var ASSET_TYPES = require('./types.js').ASSET_TYPES;
+}
+
 /**
  * 管理者可以在系統上直接改的欄位；其他欄位來自學校清冊（匯入）或由流程（借用、盤點、異常）更新。
  * 存放位置以學校清冊為準，只由匯入更新；實際位置不同時填目前位置。
  */
 var ASSET_EDITABLE = ['目前位置', '開放借用', '經管人', '備註'];
+/** 系所物品是系所自建的，名稱、規格、系所編號也能改。 */
+var ITEM_EDITABLE = ['系所編號', '名稱', '規格', '目前位置', '開放借用', '經管人', '備註'];
+
+function editableFields(type) {
+  return type === 'ITEM' ? ITEM_EDITABLE : ASSET_EDITABLE;
+}
 var ASSET_OPEN_VALUES = ['是', '否'];
 /** 可以在清單勾選多筆一次修改的欄位（Admin、Super）。目前位置空白＝回到清冊位置。 */
 var ASSET_BATCH_FIELDS = ['目前位置', '經管人', '開放借用'];
@@ -39,9 +49,9 @@ function displaySerial(row) {
   return purchase ? { text: purchase, isPurchaseNo: true } : { text: '', isPurchaseNo: false };
 }
 
-/** 清單、QR 網址用的鍵：固定資產為資產編號（增值紀錄併在同一編號），保管品為保管品鍵。 */
+/** 清單、QR 網址用的鍵：固定資產為資產編號（增值紀錄併在同一編號），保管品為保管品鍵，系所物品為物品ID。 */
 function assetKey(type, row) {
-  return type === 'FIXED' ? String(row['資產編號'] || '') : String(row['保管品鍵'] || '');
+  return String(row[ASSET_TYPES[type].keyField] || '');
 }
 
 /** 實際位置：有填目前位置就用它，否則用清冊的存放位置。 */
@@ -50,12 +60,12 @@ function currentLocation(row) {
 }
 
 function assetName(type, row) {
-  return type === 'FIXED' ? row['資產名稱'] : row['品名規格'];
+  return row[ASSET_TYPES[type].nameField];
 }
 
 var ASSET_SEARCH_FIELDS = [
   '資產編號', '資產名稱', '廠牌規格', '產品序號', '請購案號', '存放位置', '目前位置', '保管人代號', '保管人姓名',
-  '保管品鍵', '材料編號', '品名規格', '備註',
+  '保管品鍵', '材料編號', '品名規格', '備註', '物品ID', '系所編號', '名稱', '規格',
 ];
 
 /**
@@ -113,7 +123,7 @@ function distinctValues(rows, field) {
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    ASSET_EDITABLE, ASSET_OPEN_VALUES, ASSET_BATCH_FIELDS, assetStatus, isLendable, isMoved, displaySerial, assetKey,
+    ASSET_EDITABLE, ITEM_EDITABLE, editableFields, ASSET_OPEN_VALUES, ASSET_BATCH_FIELDS, assetStatus, isLendable, isMoved, displaySerial, assetKey,
     assetName, currentLocation, filterAssets, distinctValues,
   };
 }

@@ -6,12 +6,19 @@
 const IMPORT_TARGETS = {
   FIXED: { book: 'FIXED', sheet: '資產', label: '固定資產', prefix: 'F' },
   CUSTODY: { book: 'CUSTODY', sheet: '保管品', label: '保管品', prefix: 'C' },
+  ITEM: { book: 'ITEM', sheet: '物品', label: '系所物品', prefix: 'I' },
 };
 
 function importTarget_(type) {
   const t = IMPORT_TARGETS[type];
-  if (!t) throw new AppError('BAD_REQUEST', '匯入類型只能是 FIXED 或 CUSTODY');
+  if (!t) throw new AppError('BAD_REQUEST', '類型只能是 FIXED、CUSTODY 或 ITEM');
   return t;
+}
+
+/** 只有固定資產、保管品有學校清冊可匯入。 */
+function importOnlyTarget_(type) {
+  if (!IMPORT_TEMPLATES[type]) throw new AppError('BAD_REQUEST', '這個類型沒有匯入範本');
+  return importTarget_(type);
 }
 
 /** 資產分頁；缺少新加的欄位時先補上，否則寫入時會被略過。 */
@@ -27,7 +34,7 @@ function setting_(key) {
 
 /** 匯入前預覽用：現有資料（只給比對需要的欄位）、預設部門代號、最近的匯入批次。 */
 function importCurrent_(payload) {
-  const t = importTarget_(payload.type);
+  const t = importOnlyTarget_(payload.type);
   const keep = IMPORT_TEMPLATES[payload.type].columns.map(function (c) { return c.name; })
     .concat(['保管品鍵', '版本', '來源狀態']);
   const rows = readRows_(sheet_(t.book, t.sheet)).map(function (r) {
@@ -43,7 +50,7 @@ function importCurrent_(payload) {
  * 寫入匯入結果。payload：{ type, fileName, fileBase64?, rows（檔案原始列）, signature（預覽時的差異簽章） }。
  */
 function importCommit_(payload, actor) {
-  const t = importTarget_(payload.type);
+  const t = importOnlyTarget_(payload.type);
   if (!Array.isArray(payload.rows) || !payload.rows.length) throw new AppError('BAD_REQUEST', '檔案沒有資料');
 
   const parsed = parseImportRows(payload.type, payload.rows, { defaultDept: setting_('部門代號') });

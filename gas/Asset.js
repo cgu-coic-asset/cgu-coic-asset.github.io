@@ -13,18 +13,28 @@ function activeManagers_() {
 
 function assetList_(payload) {
   const t = importTarget_(payload.type);
-  return { rows: readRows_(sheet_(t.book, t.sheet)).map(publicRow_), managers: activeManagers_(), photoCounts: photoCountsAll_() };
+  let rows = readRows_(schemaSheet_(t.book, t.sheet)).map(publicRow_);
+  const out = { managers: activeManagers_(), photoCounts: photoCountsAll_() };
+  if (payload.type === 'ITEM') rows = joinItemsWithCustody_(rows);
+  if (payload.type === 'CUSTODY') out.itemStats = itemStatsByCustody_();
+  out.rows = rows;
+  return out;
 }
 
 /** 固定資產回傳同一資產編號的所有紀錄（含增值）；保管品回傳一筆。 */
 function assetGet_(payload) {
   const t = importTarget_(payload.type);
   const key = String(payload.key || '');
-  const field = payload.type === 'FIXED' ? '資產編號' : '保管品鍵';
-  const rows = readRows_(sheet_(t.book, t.sheet)).filter(function (r) { return r[field] === key; });
+  const field = ASSET_TYPES[payload.type].keyField;
+  let rows = readRows_(schemaSheet_(t.book, t.sheet)).filter(function (r) { return r[field] === key; });
   if (!rows.length) throw new AppError('NOT_FOUND', '找不到 ' + key);
   rows.sort(function (a, b) { return Number(a['增值次數'] || 0) - Number(b['增值次數'] || 0); });
-  return { rows: rows.map(publicRow_), managers: activeManagers_() };
+  rows = rows.map(publicRow_);
+  const out = { managers: activeManagers_() };
+  if (payload.type === 'ITEM') rows = joinItemsWithCustody_(rows);
+  if (payload.type === 'CUSTODY') out.items = joinItemsWithCustody_(itemsOfCustody_(key));
+  out.rows = rows;
+  return out;
 }
 
 function validateAssetChanges_(changes) {
@@ -46,16 +56,18 @@ function assetUpdate_(payload, actor) {
   validateAssetChanges_(changes);
 
   const sh = targetSheet_(t);
-  const current = readRows_(sh).find(function (r) { return importRowKey(payload.type, r) === payload.rowKey; });
+  const all = readRows_(sh);
+  const current = all.find(function (r) { return importRowKey(payload.type, r) === payload.rowKey; });
+  if (current && payload.type === 'ITEM') validateItemChanges_(changes, all, current);
   if (!current) throw new AppError('NOT_FOUND');
   const conflict = checkVersion(current, payload.version);
   if (conflict) throw new AppError('VERSION_CONFLICT', undefined, conflict);
 
-  const result = applyChanges(current, changes, ASSET_EDITABLE, actor.email, now_());
+  const result = applyChanges(current, changes, editableFields(payload.type), actor.email, now_());
   if (!result.changed) return publicRow_(current);
   writeRow_(sh, current._row, result.row);
   writeLog_(actor, '修改資產', t.label, payload.rowKey, result.before, result.after, payload.reason);
-  return publicRow_(result.row);
+  return payload.type === 'ITEM' ? joinItemsWithCustody_([publicRow_(result.row)])[0] : publicRow_(result.row);
 }
 
 /**

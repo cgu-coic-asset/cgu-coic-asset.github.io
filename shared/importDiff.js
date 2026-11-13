@@ -14,9 +14,10 @@ if (typeof module !== 'undefined' && typeof IMPORT_TEMPLATES === 'undefined') {
 var SOURCE_OK = '正常';
 var SOURCE_MISSING = '待確認';
 
-/** 一筆資料的唯一鍵：固定資產為「資產編號#增值次數」，保管品為保管品鍵。 */
+/** 一筆資料的唯一鍵：固定資產為「資產編號#增值次數」，保管品為保管品鍵，系所物品為物品ID。 */
 function importRowKey(type, row) {
   if (type === 'FIXED') return String(row['資產編號'] || '') + '#' + String(row['增值次數'] || '0');
+  if (type === 'ITEM') return String(row['物品ID'] || '');
   return String(row['保管品鍵'] || '');
 }
 

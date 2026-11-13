@@ -3,7 +3,7 @@
  * 規則見 shared/photo.js；照片沒存好就不會有紀錄，流程（盤點、借還）以紀錄為準。
  */
 
-const PHOTO_FOLDER_KEYS = { FIXED: 'FOLDER_PHOTOS_FIXED', CUSTODY: 'FOLDER_PHOTOS_CUSTODY' };
+const PHOTO_FOLDER_KEYS = { FIXED: 'FOLDER_PHOTOS_FIXED', CUSTODY: 'FOLDER_PHOTOS_CUSTODY', ITEM: 'FOLDER_PHOTOS_ITEM' };
 
 function photoSheet_() {
   return schemaSheet_('OPS', '照片');
@@ -12,15 +12,22 @@ function photoSheet_() {
 /** 確認資產存在，回傳主紀錄。 */
 function findAssetForPhoto_(type, key) {
   const t = importTarget_(type);
-  const row = readRows_(sheet_(t.book, t.sheet)).find(function (r) { return photoAssetKey(type, r) === key; });
+  const row = readRows_(schemaSheet_(t.book, t.sheet)).find(function (r) { return photoAssetKey(type, r) === key; });
   if (!row) throw new AppError('NOT_FOUND', '找不到 ' + key);
   return row;
 }
 
 /** 資產的照片資料夾（照片/<類型>/<鍵>/）；create 為 false 時找不到回傳 null。 */
 function assetPhotoFolder_(type, key, create) {
-  const parentId = PropertiesService.getScriptProperties().getProperty(PHOTO_FOLDER_KEYS[type]);
-  if (!parentId) throw new AppError('NOT_CONFIGURED', '尚未執行 setup()：找不到照片資料夾');
+  const props = PropertiesService.getScriptProperties();
+  let parentId = props.getProperty(PHOTO_FOLDER_KEYS[type]);
+  if (!parentId) {
+    // 之後新增的類型（系所物品）第一次上傳時自動建資料夾
+    const photosId = props.getProperty('FOLDER_PHOTOS');
+    if (!photosId) throw new AppError('NOT_CONFIGURED', '尚未執行 setup()：找不到照片資料夾');
+    parentId = ensureChildFolder_(DriveApp.getFolderById(photosId), ASSET_TYPES[type].photoFolder, []).getId();
+    props.setProperty(PHOTO_FOLDER_KEYS[type], parentId);
+  }
   const parent = DriveApp.getFolderById(parentId);
   const it = parent.getFoldersByName(key);
   if (it.hasNext()) return it.next();

@@ -143,14 +143,14 @@ function renderWho() {
 
 /** QR 網址（?F…／?C…）轉成內部路由。 */
 function routeFromQr() {
-  const m = location.search.match(/^\?([FC])(.+)$/);
+  const m = location.search.match(/^\?([FCI])(.+)$/);
   if (!m) return;
   history.replaceState(null, '', location.pathname + '#/asset/' + m[1] + '/' + encodeURIComponent(decodeURIComponent(m[2])));
 }
 
 const routes = [
   { re: /^#?\/?$/, view: viewHome },
-  { re: /^#\/asset\/([FC])\/(.+)$/, view: viewAsset },
+  { re: /^#\/asset\/([FCI])\/(.+)$/, view: viewAsset },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'user.manage' },
   { re: /^#\/mine$/, view: viewMine, perm: 'self.view' },
   { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
@@ -261,9 +261,9 @@ async function viewMine(view) {
 }
 
 async function viewAsset(view, params) {
-  const type = params[0] === 'F' ? 'FIXED' : 'CUSTODY';
+  const type = typeFromQr(params[0]);
   const key = params[1];
-  const label = IMPORT_TEMPLATES[type].label;
+  const label = ASSET_TYPES[type].label;
   if (!can(state.me.role, 'asset.view')) {
     view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1>' +
       '<div class="card"><p class="muted" style="margin:0">公開資訊（名稱、照片、可否借用）建置中。</p></div>' +
@@ -279,7 +279,7 @@ async function viewAsset(view, params) {
       '<a class="btn" href="#/assets">回資產清單</a>';
     return;
   }
-  renderAssetDetail(view, type, data.rows, data.managers);
+  renderAssetDetail(view, type, data.rows, data.managers, data.items);
 }
 
 function fmtDate(v) {
@@ -307,7 +307,7 @@ function locationText(r) {
   return isMoved(r) ? '目前 ' + r['目前位置'] + '（清冊 ' + (r['存放位置'] || '未填') + '）' : (r['存放位置'] || '');
 }
 
-function renderAssetDetail(view, type, rows, managers) {
+function renderAssetDetail(view, type, rows, managers, pieces) {
   const main = rows[0];
   const serial = displaySerial(main);
   const kv = (k, v) => v && String(v).trim() ? '<tr><th>' + esc(k) + '</th><td>' + v + '</td></tr>' : '';
@@ -324,6 +324,15 @@ function renderAssetDetail(view, type, rows, managers) {
       kv('研究計劃編號', esc(main['研究計劃編號'])) + kv('開放借用', esc(main['開放借用'] || '否')) +
       kv('最近盤點', esc(fmtDate(main['最近盤點日']) + ' ' + (main['最近盤點結果'] || ''))) +
       kv('備註', esc(main['備註']));
+  } else if (type === 'ITEM') {
+    const link = main['保管品鍵']
+      ? '<a href="#/asset/C/' + encodeURIComponent(main['保管品鍵']) + '">' + esc(main['材料編號'] || main['保管品鍵']) + '</a> ' + esc(main['保管品名稱'] || '')
+      : '無帳物品（不在學校清冊）';
+    table = kv('系所編號', '<strong>' + esc(main['系所編號'] || '（未編號）') + '</strong>') + kv('物品ID', esc(main['物品ID'])) +
+      kv('規格', esc(main['規格'])) + kv('對應保管品', link) + kv('部門', esc(main['部門代號'])) +
+      (main['保管人代號'] ? kv('保管人', custodian) : '') + kv('經管人', esc(managerLabel(main['經管人'], managers))) +
+      kv('目前位置', esc(main['目前位置'])) + kv('開放借用', esc(main['開放借用'] || '否')) +
+      kv('最近盤點', esc(fmtDate(main['最近盤點日']) + ' ' + (main['最近盤點結果'] || ''))) + kv('備註', esc(main['備註']));
   } else {
     table = kv('保管品鍵', esc(main['保管品鍵'])) + kv('材料編號', esc(main['材料編號'])) +
       kv('帳面數量', esc(main['帳面數量'] + ' ' + (main['單位'] || ''))) + kv('部門', esc(main['部門代號'])) +
@@ -341,12 +350,14 @@ function renderAssetDetail(view, type, rows, managers) {
     esc(main['修改時間'] || main['建立時間']) + ' ' + esc(main['修改者'] || main['建立者']) +
     (main['最後匯入批次'] ? '｜匯入批次 ' + esc(main['最後匯入批次']) : '') + '</div></div>' +
     (additions ? '<div class="card"><h2>增值紀錄</h2><ul class="list">' + additions + '</ul></div>' : '') +
+    (type === 'CUSTODY' ? piecesCardHtml(main, pieces || []) : '') +
     '<div class="card"><h2>建檔照片</h2><div id="photoBox"><p class="muted">載入中…</p></div>' +
     (can(state.me.role, 'photo.upload') ? photoButtonsHtml() : '') + '<ul class="list" id="upList"></ul></div>' +
     '<div class="card"><h2>管理</h2><div class="row">' +
     (can(state.me.role, 'asset.edit') ? '<button class="primary" id="aEdit">編輯</button>' : '') +
     '<button disabled>盤點</button><button disabled>借出</button><button disabled>歸還</button></div></div>' +
     '<a class="btn" href="#/assets">回資產清單</a>';
+  if (type === 'CUSTODY' && $('#pcNew')) $('#pcNew').onclick = () => createPiecesDialog(main, pieces || []);
   const photoKey = photoAssetKey(type, main);
   loadPhotos(type, photoKey);
   if (can(state.me.role, 'photo.upload')) bindPhotoButtons(type, photoKey);
@@ -358,7 +369,7 @@ function renderAssetDetail(view, type, rows, managers) {
       const i = cache.rows.findIndex((r) => importRowKey(type, r) === importRowKey(type, updated));
       if (i >= 0) cache.rows[i] = updated;
     }
-    renderAssetDetail(view, type, rows, managers);
+    renderAssetDetail(view, type, rows, managers, pieces);
   });
 }
 
@@ -377,10 +388,16 @@ function managerOptions(managers, selected, extra) {
 function editAsset(type, row, managers, done) {
   const dlg = $('#dialog');
   const form = $('#dialogForm');
-  form.innerHTML = '<h2>編輯 ' + esc(assetKey(type, row)) + '</h2>' +
-    '<p class="meta muted">名稱、規格、保管人、存放位置以學校清冊為準，請用匯入更新。</p>' +
-    '<label for="eLoc">目前位置（實際放的地方；清冊：' + esc(row['存放位置'] || '未填') + '）</label>' +
-    '<input id="eLoc" value="' + esc(row['目前位置']) + '" placeholder="和清冊相同就留空">' +
+  const isItem = type === 'ITEM';
+  form.innerHTML = '<h2>編輯 ' + esc(isItem ? (row['系所編號'] || row['物品ID']) : assetKey(type, row)) + '</h2>' +
+    (isItem
+      ? '<label for="eCode">系所編號（例 COIC-001；留空＝未編號）</label><input id="eCode" value="' + esc(row['系所編號']) + '">' +
+        '<label for="eName">名稱</label><input id="eName" value="' + esc(row['名稱']) + '">' +
+        '<label for="eSpec">規格</label><input id="eSpec" value="' + esc(row['規格']) + '">' +
+        '<label for="eLoc">目前位置</label><input id="eLoc" value="' + esc(row['目前位置']) + '">'
+      : '<p class="meta muted">名稱、規格、保管人、存放位置以學校清冊為準，請用匯入更新。</p>' +
+        '<label for="eLoc">目前位置（實際放的地方；清冊：' + esc(row['存放位置'] || '未填') + '）</label>' +
+        '<input id="eLoc" value="' + esc(row['目前位置']) + '" placeholder="和清冊相同就留空">') +
     '<label for="eOpen">開放借用</label><select id="eOpen">' + ASSET_OPEN_VALUES.map((v) =>
       '<option' + (v === (row['開放借用'] || '否') ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>' +
     '<label for="eMgr">經管人（實際負責保管、借用的管理者）</label><select id="eMgr">' +
@@ -396,7 +413,9 @@ function editAsset(type, row, managers, done) {
     try {
       const updated = await api('asset.update', {
         type, rowKey: importRowKey(type, row), version: row['版本'], reason: $('#eReason').value,
-        changes: { 目前位置: $('#eLoc').value, 開放借用: $('#eOpen').value, 經管人: $('#eMgr').value, 備註: $('#eNote').value },
+        changes: Object.assign(
+          { 目前位置: $('#eLoc').value, 開放借用: $('#eOpen').value, 經管人: $('#eMgr').value, 備註: $('#eNote').value },
+          isItem ? { 系所編號: $('#eCode').value, 名稱: $('#eName').value, 規格: $('#eSpec').value } : {}),
       });
       dlg.close();
       toast('已儲存');
@@ -601,11 +620,12 @@ async function loadAssets(type, force) {
 }
 
 async function viewAssets(view) {
-  const type = storeGet('asset.listType') === 'CUSTODY' ? 'CUSTODY' : 'FIXED';
+  const saved = storeGet('asset.listType');
+  const type = ASSET_TYPES[saved] ? saved : 'FIXED';
   state.assetUi = state.assetUi || {};
   const ui = state.assetUi[type] || (state.assetUi[type] = { f: {}, shown: LIST_PAGE, selected: new Set() });
-  view.innerHTML = '<h1>資產清單</h1><div class="tabs">' + ['FIXED', 'CUSTODY'].map((t) =>
-    '<button type="button" data-type="' + t + '" class="' + (t === type ? 'on' : '') + '">' + IMPORT_TEMPLATES[t].label + '</button>').join('') +
+  view.innerHTML = '<h1>資產清單</h1><div class="tabs">' + Object.keys(ASSET_TYPES).map((t) =>
+    '<button type="button" data-type="' + t + '" class="' + (t === type ? 'on' : '') + '">' + ASSET_TYPES[t].label + '</button>').join('') +
     '<button type="button" id="lReload" title="重新載入">重新整理</button></div><div id="lBody"><p class="muted">載入中…</p></div>';
   view.querySelectorAll('[data-type]').forEach((b) => {
     b.onclick = () => { storeSet('asset.listType', b.dataset.type); viewAssets(view); };
@@ -629,7 +649,10 @@ function renderAssetList(type, data, ui) {
   const rows = data.rows;
   const mgrOpts = [{ value: 'me', label: '我經管的' }, { value: 'none', label: '未指定經管人' }]
     .concat(data.managers.map((m) => ({ value: m.email, label: '經管人：' + (m.name || m.email) })));
-  $('#lBody').innerHTML = '<div class="card filters">' +
+  const newItem = type === 'ITEM' && can(state.me.role, 'asset.edit')
+    ? '<div class="row" style="margin-bottom:10px"><button type="button" class="primary" id="iNew">＋ 新增系所物品</button>' +
+      '<span class="meta muted">保管品的單件請到該保管品頁面「建立單件」</span></div>' : '';
+  $('#lBody').innerHTML = newItem + '<div class="card filters">' +
     '<input id="fQ" type="search" placeholder="搜尋編號、名稱、規格、序號、位置、保管人…" value="' + esc(f.q || '') + '">' +
     '<div class="fgrid">' +
     sel('fMgr', '經管人', mgrOpts, '<option value="">經管人：不限</option>') +
@@ -645,6 +668,7 @@ function renderAssetList(type, data, ui) {
     '<label class="radio"><input type="checkbox" data-c="待確認"' + (f['待確認'] ? ' checked' : '') + '> 只看清冊沒有（待確認）</label>' +
     '</div></div><div id="lResult"></div>';
 
+  if ($('#iNew')) $('#iNew').onclick = () => createItemDialog(data.managers);
   const update = () => { ui.shown = LIST_PAGE; drawAssetResults(type, data, ui); };
   let timer;
   $('#fQ').oninput = () => { f.q = $('#fQ').value; clearTimeout(timer); timer = setTimeout(update, 200); };
@@ -659,20 +683,28 @@ function renderAssetList(type, data, ui) {
 
 function drawAssetResults(type, data, ui) {
   const list = filterAssets(type, data.rows, ui.f, state.me.email, data.photoCounts);
+  if (type === 'ITEM') list.sort((a, b) => compareItemCodes(a['系所編號'], b['系所編號']) || (a['物品ID'] < b['物品ID'] ? -1 : 1));
   const canEdit = can(state.me.role, 'asset.edit');
-  const prefix = type === 'FIXED' ? 'F' : 'C';
+  const prefix = ASSET_TYPES[type].qr;
   const items = list.slice(0, ui.shown).map((r) => {
     const k = importRowKey(type, r);
     const serial = displaySerial(r);
+    const stats = type === 'CUSTODY' && (data.itemStats || {})[r['保管品鍵']];
     const meta = type === 'FIXED'
-      ? [locationText(r), r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
-      : [r['帳面數量'] + ' ' + (r['單位'] || ''), r['保管人姓名'] || r['保管人代號'], locationText(r) || r['部門代號']];
+      ? [assetKey(type, r), locationText(r), r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
+      : type === 'ITEM'
+        ? [r['規格'], r['材料編號'] || '無帳', r['目前位置'], r['保管人姓名']]
+        : [assetKey(type, r), r['帳面數量'] + ' ' + (r['單位'] || '') + (stats ? '（單件 ' + stats['件數'] + '，借出 ' + stats['借出'] + '）' : ''),
+          r['保管人姓名'] || r['保管人代號'], locationText(r) || r['部門代號']];
+    const title = type === 'ITEM'
+      ? '<span class="code">' + esc(r['系所編號'] || '未編號') + '</span> ' + esc(r['名稱'])
+      : esc(assetName(type, r));
     const mgr = managerLabel(r['經管人'], data.managers);
     const nPhoto = ((data.photoCounts || {})[type + ':' + assetKey(type, r)] || {})['建檔'] || 0;
     return '<li class="asset-item">' +
       (canEdit ? '<input type="checkbox" data-k="' + esc(k) + '" data-v="' + esc(r['版本']) + '"' + (ui.selected.has(k) ? ' checked' : '') + ' aria-label="勾選">' : '') +
-      '<a href="#/asset/' + prefix + '/' + encodeURIComponent(assetKey(type, r)) + '"><div><strong>' + esc(assetName(type, r)) + '</strong></div>' +
-      '<div class="meta">' + esc(assetKey(type, r)) + '｜' + meta.filter(Boolean).map(esc).join('｜') + '</div>' +
+      '<a href="#/asset/' + prefix + '/' + encodeURIComponent(assetKey(type, r)) + '"><div><strong>' + title + '</strong></div>' +
+      '<div class="meta">' + meta.filter(Boolean).map(esc).join('｜') + '</div>' +
       '<div class="row chips">' + statusChips(r) + (mgr ? '<span class="chip">經管：' + esc(mgr) + '</span>' : '') +
       (nPhoto ? '<span class="chip">建檔照片 ' + nPhoto + '</span>' : '') + '</div></a></li>';
   }).join('');
@@ -684,7 +716,8 @@ function drawAssetResults(type, data, ui) {
     (list.length > ui.shown ? '<div class="center" style="margin-top:8px"><button type="button" id="lMore">再顯示 ' +
       Math.min(LIST_PAGE, list.length - ui.shown) + ' 筆（還有 ' + (list.length - ui.shown) + '）</button></div>' : '') + '</div>' +
     (canEdit ? '<div class="batchbar" id="batchBar"' + (ui.selected.size ? '' : ' hidden') + '>' +
-      '<select id="bField" aria-label="要改的欄位">' + ASSET_BATCH_FIELDS.map((x) => '<option' + (x === ui.batchField ? ' selected' : '') + '>' + x + '</option>').join('') +
+      '<select id="bField" aria-label="要改的欄位">' + (type === 'ITEM' ? ['系所編號'] : []).concat(ASSET_BATCH_FIELDS)
+        .map((x) => '<option' + (x === ui.batchField ? ' selected' : '') + '>' + x + '</option>').join('') +
       '</select><span id="bValueBox" class="grow"></span><button class="primary" type="button" id="bGo">套用</button></div>' : '');
 
   if ($('#lMore')) $('#lMore').onclick = () => { ui.shown += LIST_PAGE; drawAssetResults(type, data, ui); };
@@ -702,6 +735,10 @@ function drawAssetResults(type, data, ui) {
   $('#selNone').onclick = () => { ui.selected.clear(); drawAssetResults(type, data, ui); };
   const fillValues = () => {
     ui.batchField = $('#bField').value;
+    if (ui.batchField === '系所編號') {
+      $('#bValueBox').innerHTML = '<input id="bValue" placeholder="前綴，例 COIC、NX2（依勾選順序接續編號）" autocomplete="off">';
+      return;
+    }
     if (ui.batchField === '目前位置') {
       // 從已用過的位置名稱挑，名稱才會一致；空白＝回到清冊位置
       $('#bValueBox').innerHTML = '<input id="bValue" list="bLocs" placeholder="選或輸入位置；空白＝回到清冊位置" autocomplete="off">' +
@@ -720,6 +757,22 @@ function drawAssetResults(type, data, ui) {
     const shown = field === '經管人' ? (value ? managerLabel(value, data.managers) : '（取消）')
       : field === '目前位置' && !value.trim() ? '（回到清冊位置）' : value;
     ev.target.disabled = true;
+    if (field === '系所編號') {
+      const keys = [...ui.selected];
+      const already = keys.filter((k) => (data.rows.find((r) => r['物品ID'] === k) || {})['系所編號']).length;
+      try {
+        if (already && !confirm(already + ' 件已經有編號，會改成新的號碼（舊貼紙要重印）。確定？')) throw new Error('已取消');
+        const r = await api('item.number', { prefix: value, items: keys.map((k) => ({ rowKey: k, version: versions[k] })) });
+        toast('已編號 ' + r.codes[0] + (r.codes.length > 1 ? ' ～ ' + r.codes[r.codes.length - 1] : ''));
+        ui.selected.clear();
+        await loadAssets(type, true);
+      } catch (e) {
+        toast(e.message, true);
+        if (e.code === 'VERSION_CONFLICT') await loadAssets(type, true).catch(() => {});
+      }
+      renderAssetList(type, state.assets[type], ui);
+      return;
+    }
     try {
       const r = await api('asset.assign', {
         type, field, value, items: [...ui.selected].map((k) => ({ rowKey: k, version: versions[k] })),
@@ -734,6 +787,87 @@ function drawAssetResults(type, data, ui) {
     }
     renderAssetList(type, state.assets[type], ui);
   };
+}
+
+// ----- 系所物品 -----
+
+/** 保管品詳細頁：已建立的單件與統計。 */
+function piecesCardHtml(custody, pieces) {
+  const active = pieces.filter((p) => assetStatus(p) !== '報廢');
+  const lent = active.filter((p) => assetStatus(p) === '借出').length;
+  const book = Number(custody['帳面數量']) || 0;
+  const sorted = active.slice().sort((a, b) => compareItemCodes(a['系所編號'], b['系所編號']));
+  return '<div class="card"><h2>系所物品（可借用單件）</h2><p class="meta">帳面 ' + esc(custody['帳面數量']) + '｜已建單件 ' +
+    active.length + '｜借出 ' + lent + '｜在庫 ' + (active.length - lent) + (book > active.length ? '｜尚未建立 ' + (book - active.length) : '') + '</p>' +
+    (sorted.length ? '<div class="codes">' + sorted.map((p) => '<a class="chip' + (assetStatus(p) === '借出' ? ' accent' : '') + '" href="#/asset/I/' +
+      encodeURIComponent(p['物品ID']) + '">' + esc(p['系所編號'] || p['物品ID']) + '</a>').join(' ') + '</div>' : '') +
+    (can(state.me.role, 'asset.edit') && book > active.length ? '<div class="row" style="margin-top:10px"><button type="button" id="pcNew">建立單件</button></div>' : '') +
+    '</div>';
+}
+
+function createPiecesDialog(custody, pieces) {
+  const remain = (Number(custody['帳面數量']) || 0) - pieces.filter((p) => assetStatus(p) !== '報廢').length;
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  form.innerHTML = '<h2>從保管品建立單件</h2><div class="meta muted">' + esc(custody['品名規格']) + '</div>' +
+    '<label for="pcCount">件數（最多 ' + remain + '）</label><input id="pcCount" type="number" min="1" max="' + remain + '" value="' + remain + '">' +
+    '<label for="pcPrefix">系所編號前綴（選填，例 COIC；有填就接續編號，留空之後再編）</label><input id="pcPrefix" autocomplete="off">' +
+    '<p class="meta muted">名稱、部門、保管人、經管人、目前位置會帶入保管品的資料，建立後可再改。</p>' +
+    '<div class="row" style="margin-top:14px;justify-content:flex-end"><button value="cancel" formnovalidate>取消</button>' +
+    '<button class="primary" id="pcGo" value="save">建立</button></div>';
+  $('#pcGo').onclick = async (ev) => {
+    ev.preventDefault();
+    ev.target.disabled = true;
+    try {
+      const rows = await api('item.fromCustody', { key: custody['保管品鍵'], count: $('#pcCount').value, prefix: $('#pcPrefix').value });
+      dlg.close();
+      toast('已建立 ' + rows.length + ' 件' + (rows[0]['系所編號'] ? '（' + rows[0]['系所編號'] + ' 起）' : ''));
+      if (state.assets) { delete state.assets.ITEM; delete state.assets.CUSTODY; }
+      render();
+    } catch (e) {
+      ev.target.disabled = false;
+      toast(e.message, true);
+    }
+  };
+  dlg.showModal();
+}
+
+/** 逐筆新增（既有紙本編號、無帳物品）。 */
+function createItemDialog(managers) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  form.innerHTML = '<h2>新增系所物品</h2>' +
+    '<label for="nCode">系所編號（選填；紙本的「NX2 #8」輸入後會存成 NX2-008）</label><input id="nCode" autocomplete="off">' +
+    '<label for="nName">名稱</label><input id="nName" required placeholder="例：HDMI 線">' +
+    '<label for="nSpec">規格</label><input id="nSpec" placeholder="例：3 公尺">' +
+    '<label for="nLoc">目前位置</label><input id="nLoc">' +
+    '<label for="nMgr">經管人</label><select id="nMgr">' + managerOptions(managers, state.me.email, '<option value="">（未指定）</option>') + '</select>' +
+    '<label for="nCount">件數（同樣的東西一次建多件；有填系所編號時只能 1 件）</label><input id="nCount" type="number" min="1" max="200" value="1">' +
+    '<label for="nNote">備註</label><input id="nNote">' +
+    '<div class="row" style="margin-top:14px;justify-content:flex-end"><button value="cancel" formnovalidate>取消</button>' +
+    '<button class="primary" id="nGo" value="save">建立</button></div>';
+  $('#nGo').onclick = async (ev) => {
+    ev.preventDefault();
+    const count = Math.max(1, Math.min(200, parseInt($('#nCount').value, 10) || 1));
+    if ($('#nCode').value.trim() && count > 1) { toast('有填系所編號時只能建 1 件；多件請建好後用批次編號', true); return; }
+    if (!$('#nName').value.trim()) { toast('請填名稱', true); return; }
+    ev.target.disabled = true;
+    const def = {
+      系所編號: $('#nCode').value, 名稱: $('#nName').value, 規格: $('#nSpec').value, 目前位置: $('#nLoc').value,
+      經管人: $('#nMgr').value, 備註: $('#nNote').value,
+    };
+    try {
+      const rows = await api('item.create', { items: Array.from({ length: count }, () => def) });
+      dlg.close();
+      toast('已建立 ' + rows.length + ' 件');
+      if (state.assets) delete state.assets.ITEM;
+      render();
+    } catch (e) {
+      ev.target.disabled = false;
+      toast(e.message, true);
+    }
+  };
+  dlg.showModal();
 }
 
 // ----- 帳號 -----

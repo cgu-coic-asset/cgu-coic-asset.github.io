@@ -9,6 +9,8 @@ test('資料夾：類型／資產編號或保管品鍵；增值紀錄共用資�
   assert.deepStrictEqual(photoFolderPath('CUSTODY', 'D000000256-CMPPEE3-0A'), ['保管品', 'D000000256-CMPPEE3-0A']);
   assert.strictEqual(photoAssetKey('FIXED', { 資產編號: '0351360284', 增值次數: '1' }), '0351360284');
   assert.strictEqual(photoAssetKey('CUSTODY', { 保管品鍵: 'D000000256-A1' }), 'D000000256-A1');
+  assert.strictEqual(photoAssetKey('ITEM', { 物品ID: 'I000001', 系所編號: 'NX2-008' }), 'I000001');
+  assert.deepStrictEqual(photoFolderPath('ITEM', 'I000001'), ['系所物品', 'I000001']);
 });
 
 test('檔名：用途_日期_序號.jpg，序號接續同用途同日期的最大值', () => {
