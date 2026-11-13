@@ -861,7 +861,8 @@ async function exportLabels(type, data, rows) {
   XLSX.utils.book_append_sheet(wb, ws, '貼紙');
   const d = new Date();
   const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-  XLSX.writeFile(wb, '貼紙_' + ASSET_TYPES[type].label + '_' + ymd + '_' + rows.length + '筆.xlsx');
+  // bookSST：用一般文字儲存格（和在 Excel 打字一樣）；cellStyles：套用文字格式 @
+  XLSX.writeFile(wb, '貼紙_' + ASSET_TYPES[type].label + '_' + ymd + '_' + rows.length + '筆.xlsx', { bookSST: true, cellStyles: true });
   const noCode = type === 'ITEM' ? rows.filter((r) => !r['系所編號']).length : 0;
   toast('已匯出 ' + rows.length + ' 筆' + (noCode ? '（其中 ' + noCode + ' 筆還沒有系所編號）' : ''), noCode > 0);
 }

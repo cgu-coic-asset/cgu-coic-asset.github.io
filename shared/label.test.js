@@ -58,6 +58,13 @@ test('CSV：BOM、逗號、引號跳脫、CRLF', () => {
   assert.strictEqual(csv, '﻿a,"b,c","d""e"\r\n1,,中\r\n');
 });
 
+test('固定資產黑框：有系所編號就用它，沒有用部門代號', () => {
+  const cb = labelRow(BASE, 'FIXED', { 資產編號: '9K60900089', 資產名稱: 'Chromebook', 部門代號: 'D100', 系所編號: 'CB-001' }, null, [32]);
+  assert.strictEqual(cb[1], 'CB-001');
+  const plain = labelRow(BASE, 'FIXED', { 資產編號: '0351360284', 資產名稱: 'x', 部門代號: 'D100' }, null, [32]);
+  assert.strictEqual(plain[1], 'D100');
+});
+
 test('只印一行：截斷加「…」；欄位沒有 NAME2；名稱用修正後的', () => {
   assert.strictEqual(fitLabelName('筆記型電腦', 32), '筆記型電腦');
   const long = fitLabelName('AI電腦模組(AI及BIG DATA工作站與周邊系統)', 32);

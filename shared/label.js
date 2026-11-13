@@ -80,7 +80,7 @@ function labelUrl(qrBase, type, key) {
 
 /**
  * 一筆資料轉成貼紙欄位。
- * 固定資產：黑框＝部門、編號＝資產編號；保管品：黑框＝部門、編號＝材料編號；
+ * 固定資產：黑框＝系所編號（系所借用的，例 CB-001），沒有就用部門代號，編號＝資產編號；保管品：黑框＝部門、編號＝材料編號；
  * 系所物品：黑框＝系所編號、編號＝連結的資產編號或材料編號（無帳留白）、保管人沒有時用經管人。
  * managerName：Email → 姓名（系所物品沒有保管人時用）；widths：[NAME1 寬度, NAME2 寬度]。
  */
@@ -95,7 +95,7 @@ function labelRow(qrBase, type, row, managerName, widths) {
     name = [row['名稱'], row['規格']].filter(Boolean).join(' ');
     if (!custodian && row['經管人']) custodian = (managerName && managerName(row['經管人'])) || '';
   } else {
-    box = row['部門代號'] || '';
+    box = (type === 'FIXED' && row['系所編號']) || row['部門代號'] || '';
     code = type === 'FIXED' ? row['資產編號'] : row['材料編號'];
     name = assetName(type, row);
   }
