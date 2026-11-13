@@ -153,6 +153,7 @@ const routes = [
   { re: /^#\/asset\/([FC])\/(.+)$/, view: viewAsset },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'admin.manage' },
   { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
+  { re: /^#\/assets$/, view: viewAssets, perm: 'asset.view' },
 ];
 
 function render() {
@@ -187,7 +188,7 @@ function viewHome(view) {
   if (can(role, 'asset.view')) {
     html += '<h1>工作選單</h1><div class="grid">' +
       tile('#/scan', '掃描 QR', '盤點、借出、歸還', false) +
-      tile('#/assets', '資產清單', '查詢與編輯', false) +
+      tile('#/assets', '資產清單', '查詢、編輯、經管人', true) +
       tile('#/inventory', '盤點', '年度與不定期', false) +
       tile('#/loans', '借用', '申請、借出、歸還', false) +
       tile('#/import', '匯入', '學校清冊 Excel', true) +
@@ -207,17 +208,256 @@ function viewHome(view) {
   view.innerHTML = html;
 }
 
-function viewAsset(view, params) {
-  const type = params[0] === 'F' ? '固定資產' : '保管品';
+async function viewAsset(view, params) {
+  const type = params[0] === 'F' ? 'FIXED' : 'CUSTODY';
   const key = params[1];
-  let html = '<h1>' + esc(type) + ' ' + esc(key) + '</h1>' +
-    '<div class="card"><p class="muted" style="margin:0">資產詳細資料（名稱、照片、可否借用）建置中。</p></div>';
-  if (can(state.me.role, 'asset.view')) {
-    html += '<div class="card"><h2>管理</h2><div class="row">' +
-      '<button disabled>盤點</button><button disabled>借出</button><button disabled>歸還</button>' +
-      '<button disabled>補拍建檔照片</button></div></div>';
+  const label = IMPORT_TEMPLATES[type].label;
+  if (!can(state.me.role, 'asset.view')) {
+    view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1>' +
+      '<div class="card"><p class="muted" style="margin:0">公開資訊（名稱、照片、可否借用）建置中。</p></div>' +
+      '<a class="btn" href="#/">回首頁</a>';
+    return;
   }
-  view.innerHTML = html + '<a class="btn" href="#/">回首頁</a>';
+  view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1><p class="muted">載入中…</p>';
+  let data;
+  try {
+    data = await api('asset.get', { type, key });
+  } catch (e) {
+    view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1><div class="card"><p>' + esc(e.message) + '</p></div>' +
+      '<a class="btn" href="#/assets">回資產清單</a>';
+    return;
+  }
+  renderAssetDetail(view, type, data.rows, data.managers);
+}
+
+function fmtDate(v) {
+  return /^\d{8}$/.test(v || '') ? v.slice(0, 4) + '/' + v.slice(4, 6) + '/' + v.slice(6) : (v || '');
+}
+
+function managerLabel(email, managers) {
+  if (!email) return '';
+  const m = (managers || []).find((x) => x.email === String(email).toLowerCase());
+  return m && m.name ? m.name : email;
+}
+
+function statusChips(r) {
+  return '<span class="chip ' + (r['狀態'] === '可借' ? 'ok' : 'bad') + '">' + esc(r['狀態'] || '—') + '</span> ' +
+    (r['開放借用'] === '是' ? '<span class="chip accent">開放借用</span> ' : '') +
+    (r['來源狀態'] === '待確認' ? '<span class="chip warn">清冊沒有・待確認</span> ' : '');
+}
+
+function renderAssetDetail(view, type, rows, managers) {
+  const main = rows[0];
+  const serial = displaySerial(main);
+  const kv = (k, v) => v && String(v).trim() ? '<tr><th>' + esc(k) + '</th><td>' + v + '</td></tr>' : '';
+  const custodian = esc(main['保管人代號']) + ' ' + esc(main['保管人姓名']);
+  let table;
+  if (type === 'FIXED') {
+    table = kv('資產編號', esc(main['資產編號'])) + kv('廠牌規格', esc(main['廠牌規格'])) +
+      kv(serial.isPurchaseNo ? '請購案號（無產品序號）' : '產品序號', esc(serial.text)) +
+      (serial.isPurchaseNo ? '' : kv('請購案號', esc(main['請購案號']))) +
+      kv('部門', esc(main['部門代號'])) + kv('存放位置', esc(main['存放位置'])) + kv('保管人', custodian) +
+      kv('經管人', esc(managerLabel(main['經管人'], managers))) +
+      kv('驗收取得日', fmtDate(main['驗收取得日'])) + kv('耐用年數', esc(main['耐用年數'])) +
+      kv('保固期限', fmtDate(main['保固期限'])) + kv('取得價值', esc(main['取得價值'])) +
+      kv('研究計劃編號', esc(main['研究計劃編號'])) +
+      kv('最近盤點', esc(fmtDate(main['最近盤點日']) + ' ' + (main['最近盤點結果'] || ''))) +
+      kv('備註', esc(main['備註']));
+  } else {
+    table = kv('保管品鍵', esc(main['保管品鍵'])) + kv('材料編號', esc(main['材料編號'])) +
+      kv('帳面數量', esc(main['帳面數量'] + ' ' + (main['單位'] || ''))) + kv('部門', esc(main['部門代號'])) +
+      kv('保管人', custodian) + kv('經管人', esc(managerLabel(main['經管人'], managers))) +
+      kv('存放位置', esc(main['存放位置'])) + kv('來源最後異動日', fmtDate(main['來源最後異動日'])) +
+      kv('最近點數', esc(fmtDate(main['最近盤點日']) + (main['最近盤點數量'] ? ' 實點 ' + main['最近盤點數量'] : ''))) +
+      kv('備註', esc(main['備註']));
+  }
+  const additions = rows.slice(1).map((r) => '<li><strong>增值 ' + esc(r['增值次數']) + '</strong> ' + esc(r['資產名稱']) +
+    '<div class="meta">' + esc(r['廠牌規格']) + '｜' + fmtDate(r['驗收取得日']) + '</div></li>').join('');
+
+  view.innerHTML = '<h1>' + esc(assetName(type, main)) + '</h1><div class="row" style="margin:-4px 0 10px">' + statusChips(main) + '</div>' +
+    '<div class="card"><table class="kv">' + table + '</table>' +
+    '<div class="meta" style="margin-top:8px">版本 ' + esc(main['版本']) + '｜最後修改 ' +
+    esc(main['修改時間'] || main['建立時間']) + ' ' + esc(main['修改者'] || main['建立者']) +
+    (main['最後匯入批次'] ? '｜匯入批次 ' + esc(main['最後匯入批次']) : '') + '</div></div>' +
+    (additions ? '<div class="card"><h2>增值紀錄</h2><ul class="list">' + additions + '</ul></div>' : '') +
+    '<div class="card"><h2>管理</h2><div class="row">' +
+    (can(state.me.role, 'asset.edit') ? '<button class="primary" id="aEdit">編輯</button>' : '') +
+    '<button disabled>盤點</button><button disabled>借出</button><button disabled>歸還</button>' +
+    '<button disabled>補拍建檔照片</button></div></div>' +
+    '<a class="btn" href="#/assets">回資產清單</a>';
+  const editBtn = $('#aEdit');
+  if (editBtn) editBtn.onclick = () => editAsset(type, main, managers, (updated) => {
+    rows[0] = updated;
+    const cache = state.assets && state.assets[type];
+    if (cache) {
+      const i = cache.rows.findIndex((r) => importRowKey(type, r) === importRowKey(type, updated));
+      if (i >= 0) cache.rows[i] = updated;
+    }
+    renderAssetDetail(view, type, rows, managers);
+  });
+}
+
+function managerOptions(managers, selected, extra) {
+  return (extra || '') + managers.map((m) => '<option value="' + esc(m.email) + '"' +
+    (m.email === String(selected || '').toLowerCase() ? ' selected' : '') + '>' + esc(m.name || m.email) + '</option>').join('');
+}
+
+function editAsset(type, row, managers, done) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  form.innerHTML = '<h2>編輯 ' + esc(assetKey(type, row)) + '</h2>' +
+    '<p class="meta muted">名稱、規格、保管人等以學校清冊為準，請用匯入更新。</p>' +
+    '<label for="eLoc">存放位置</label><input id="eLoc" value="' + esc(row['存放位置']) + '">' +
+    '<label for="eOpen">開放借用</label><select id="eOpen">' + ASSET_OPEN_VALUES.map((v) =>
+      '<option' + (v === (row['開放借用'] || '否') ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>' +
+    '<label for="eMgr">經管人（實際負責保管、借用的管理者）</label><select id="eMgr">' +
+    managerOptions(managers, row['經管人'], '<option value="">（未指定）</option>') + '</select>' +
+    '<label for="eNote">備註</label><textarea id="eNote" rows="2">' + esc(row['備註']) + '</textarea>' +
+    '<label for="eReason">修改原因（必填，會記入紀錄）</label><input id="eReason" required>' +
+    '<div class="row" style="margin-top:14px;justify-content:flex-end">' +
+    '<button value="cancel" formnovalidate>取消</button><button class="primary" id="eSave" value="save">儲存</button></div>';
+  $('#eSave').onclick = async (ev) => {
+    ev.preventDefault();
+    if (!$('#eReason').value.trim()) { toast('請填寫修改原因', true); return; }
+    ev.target.disabled = true;
+    try {
+      const updated = await api('asset.update', {
+        type, rowKey: importRowKey(type, row), version: row['版本'], reason: $('#eReason').value,
+        changes: { 存放位置: $('#eLoc').value, 開放借用: $('#eOpen').value, 經管人: $('#eMgr').value, 備註: $('#eNote').value },
+      });
+      dlg.close();
+      toast('已儲存');
+      done(updated);
+    } catch (e) {
+      ev.target.disabled = false;
+      toast(e.message, true);
+      if (e.code === 'VERSION_CONFLICT') { dlg.close(); render(); }
+    }
+  };
+  dlg.showModal();
+}
+
+// ----- 資產清單 -----
+
+const LIST_PAGE = 100;
+
+async function loadAssets(type, force) {
+  state.assets = state.assets || {};
+  if (!force && state.assets[type]) return state.assets[type];
+  const data = await api('asset.list', { type });
+  state.assets[type] = data;
+  return data;
+}
+
+async function viewAssets(view) {
+  const type = storeGet('asset.listType') === 'CUSTODY' ? 'CUSTODY' : 'FIXED';
+  state.assetUi = state.assetUi || {};
+  const ui = state.assetUi[type] || (state.assetUi[type] = { f: {}, shown: LIST_PAGE, selected: new Set() });
+  view.innerHTML = '<h1>資產清單</h1><div class="tabs">' + ['FIXED', 'CUSTODY'].map((t) =>
+    '<button type="button" data-type="' + t + '" class="' + (t === type ? 'on' : '') + '">' + IMPORT_TEMPLATES[t].label + '</button>').join('') +
+    '<button type="button" id="lReload" title="重新載入">重新整理</button></div><div id="lBody"><p class="muted">載入中…</p></div>';
+  view.querySelectorAll('[data-type]').forEach((b) => {
+    b.onclick = () => { storeSet('asset.listType', b.dataset.type); viewAssets(view); };
+  });
+  $('#lReload').onclick = async () => { await loadAssets(type, true).catch((e) => toast(e.message, true)); viewAssets(view); };
+  let data;
+  try {
+    data = await loadAssets(type);
+  } catch (e) {
+    $('#lBody').innerHTML = '<div class="card"><p>' + esc(e.message) + '</p></div>';
+    return;
+  }
+  renderAssetList(type, data, ui);
+}
+
+function renderAssetList(type, data, ui) {
+  const f = ui.f;
+  const sel = (id, field, opts, first) => '<select id="' + id + '" data-f="' + field + '">' + first +
+    opts.map((o) => '<option value="' + esc(o.value) + '"' + (f[field] === o.value ? ' selected' : '') + '>' +
+      esc(o.label) + '</option>').join('') + '</select>';
+  const rows = data.rows;
+  const mgrOpts = [{ value: 'me', label: '我經管的' }, { value: 'none', label: '未指定經管人' }]
+    .concat(data.managers.map((m) => ({ value: m.email, label: '經管人：' + (m.name || m.email) })));
+  $('#lBody').innerHTML = '<div class="card filters">' +
+    '<input id="fQ" type="search" placeholder="搜尋編號、名稱、規格、序號、位置、保管人…" value="' + esc(f.q || '') + '">' +
+    '<div class="fgrid">' +
+    sel('fMgr', '經管人', mgrOpts, '<option value="">經管人：不限</option>') +
+    sel('fStatus', '狀態', distinctValues(rows, '狀態'), '<option value="">狀態：不限</option>') +
+    sel('fDept', '部門代號', distinctValues(rows, '部門代號'), '<option value="">部門：不限</option>') +
+    sel('fCust', '保管人代號', distinctValues(rows, '保管人代號'), '<option value="">保管人：不限</option>') +
+    sel('fLoc', '存放位置', distinctValues(rows, '存放位置'), '<option value="">位置：不限</option>') +
+    '<label class="radio"><input type="checkbox" id="fMissing"' + (f['待確認'] ? ' checked' : '') + '> 只看清冊沒有（待確認）</label>' +
+    '</div></div><div id="lResult"></div>';
+
+  const update = () => { ui.shown = LIST_PAGE; drawAssetResults(type, data, ui); };
+  let timer;
+  $('#fQ').oninput = () => { f.q = $('#fQ').value; clearTimeout(timer); timer = setTimeout(update, 200); };
+  document.querySelectorAll('#lBody select[data-f]').forEach((el) => {
+    el.onchange = () => { f[el.dataset.f] = el.value; update(); };
+  });
+  $('#fMissing').onchange = () => { f['待確認'] = $('#fMissing').checked; update(); };
+  drawAssetResults(type, data, ui);
+}
+
+function drawAssetResults(type, data, ui) {
+  const list = filterAssets(type, data.rows, ui.f, state.me.email);
+  const canEdit = can(state.me.role, 'asset.edit');
+  const prefix = type === 'FIXED' ? 'F' : 'C';
+  const items = list.slice(0, ui.shown).map((r) => {
+    const k = importRowKey(type, r);
+    const serial = displaySerial(r);
+    const meta = type === 'FIXED'
+      ? [r['存放位置'], r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
+      : [r['帳面數量'] + ' ' + (r['單位'] || ''), r['保管人姓名'] || r['保管人代號'], r['存放位置'] || r['部門代號']];
+    const mgr = managerLabel(r['經管人'], data.managers);
+    return '<li class="asset-item">' +
+      (canEdit ? '<input type="checkbox" data-k="' + esc(k) + '" data-v="' + esc(r['版本']) + '"' + (ui.selected.has(k) ? ' checked' : '') + ' aria-label="勾選">' : '') +
+      '<a href="#/asset/' + prefix + '/' + encodeURIComponent(assetKey(type, r)) + '"><div><strong>' + esc(assetName(type, r)) + '</strong></div>' +
+      '<div class="meta">' + esc(assetKey(type, r)) + '｜' + meta.filter(Boolean).map(esc).join('｜') + '</div>' +
+      '<div class="row chips">' + statusChips(r) + (mgr ? '<span class="chip">經管：' + esc(mgr) + '</span>' : '') + '</div></a></li>';
+  }).join('');
+
+  $('#lResult').innerHTML = '<div class="row spread meta" style="margin:4px 2px 8px"><span>共 ' + list.length + ' 筆' +
+    (canEdit ? '，已勾選 <strong id="selCount">' + ui.selected.size + '</strong> 筆' : '') + '</span>' +
+    (canEdit ? '<span class="row"><button type="button" id="selAll">全選篩選結果</button><button type="button" id="selNone">清除勾選</button></span>' : '') +
+    '</div><div class="card"><ul class="list">' + (items || '<li class="muted">沒有符合的資料</li>') + '</ul>' +
+    (list.length > ui.shown ? '<div class="center" style="margin-top:8px"><button type="button" id="lMore">再顯示 ' +
+      Math.min(LIST_PAGE, list.length - ui.shown) + ' 筆（還有 ' + (list.length - ui.shown) + '）</button></div>' : '') + '</div>' +
+    (canEdit ? '<div class="batchbar" id="batchBar"' + (ui.selected.size ? '' : ' hidden') + '><select id="bMgr">' +
+      managerOptions(data.managers, '', '<option value="">取消經管人</option>') + '</select>' +
+      '<button class="primary" type="button" id="bGo">指定經管人</button></div>' : '');
+
+  if ($('#lMore')) $('#lMore').onclick = () => { ui.shown += LIST_PAGE; drawAssetResults(type, data, ui); };
+  if (!canEdit) return;
+  const versions = {};
+  data.rows.forEach((r) => { versions[importRowKey(type, r)] = r['版本']; });
+  const refreshBar = () => {
+    $('#selCount').textContent = ui.selected.size;
+    $('#batchBar').hidden = !ui.selected.size;
+  };
+  document.querySelectorAll('#lResult input[data-k]').forEach((cb) => {
+    cb.onchange = () => { if (cb.checked) ui.selected.add(cb.dataset.k); else ui.selected.delete(cb.dataset.k); refreshBar(); };
+  });
+  $('#selAll').onclick = () => { list.forEach((r) => ui.selected.add(importRowKey(type, r))); drawAssetResults(type, data, ui); };
+  $('#selNone').onclick = () => { ui.selected.clear(); drawAssetResults(type, data, ui); };
+  $('#bGo').onclick = async (ev) => {
+    const manager = $('#bMgr').value;
+    const who = manager ? managerLabel(manager, data.managers) : '（取消）';
+    ev.target.disabled = true;
+    try {
+      const r = await api('asset.assign', {
+        type, manager, items: [...ui.selected].map((k) => ({ rowKey: k, version: versions[k] })),
+        reason: '批次指定經管人：' + who,
+      });
+      toast('已更新 ' + r.updated + ' 筆');
+      ui.selected.clear();
+      await loadAssets(type, true);
+    } catch (e) {
+      toast(e.message, true);
+      if (e.code === 'VERSION_CONFLICT') await loadAssets(type, true).catch(() => {});
+    }
+    renderAssetList(type, state.assets[type], ui);
+  };
 }
 
 // ----- 管理者 -----
