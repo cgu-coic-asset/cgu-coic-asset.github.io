@@ -499,7 +499,7 @@ function drawAssetResults(type, data, ui) {
       Math.min(LIST_PAGE, list.length - ui.shown) + ' 筆（還有 ' + (list.length - ui.shown) + '）</button></div>' : '') + '</div>' +
     (canEdit ? '<div class="batchbar" id="batchBar"' + (ui.selected.size ? '' : ' hidden') + '>' +
       '<select id="bField" aria-label="要改的欄位">' + ASSET_BATCH_FIELDS.map((x) => '<option' + (x === ui.batchField ? ' selected' : '') + '>' + x + '</option>').join('') +
-      '</select><select id="bValue" aria-label="改成"></select><button class="primary" type="button" id="bGo">套用</button></div>' : '');
+      '</select><span id="bValueBox" class="grow"></span><button class="primary" type="button" id="bGo">套用</button></div>' : '');
 
   if ($('#lMore')) $('#lMore').onclick = () => { ui.shown += LIST_PAGE; drawAssetResults(type, data, ui); };
   if (!canEdit) return;
@@ -516,16 +516,23 @@ function drawAssetResults(type, data, ui) {
   $('#selNone').onclick = () => { ui.selected.clear(); drawAssetResults(type, data, ui); };
   const fillValues = () => {
     ui.batchField = $('#bField').value;
-    $('#bValue').innerHTML = ui.batchField === '開放借用'
+    if (ui.batchField === '目前位置') {
+      // 從已用過的位置名稱挑，名稱才會一致；空白＝回到清冊位置
+      $('#bValueBox').innerHTML = '<input id="bValue" list="bLocs" placeholder="選或輸入位置；空白＝回到清冊位置" autocomplete="off">' +
+        '<datalist id="bLocs">' + distinctValues(data.rows, '位置').map((o) => '<option value="' + esc(o.value) + '">').join('') + '</datalist>';
+      return;
+    }
+    $('#bValueBox').innerHTML = '<select id="bValue" aria-label="改成">' + (ui.batchField === '開放借用'
       ? '<option value="是">是（開放借用）</option><option value="否">否（不外借）</option>'
-      : managerOptions(data.managers, '', '<option value="">取消經管人</option>');
+      : managerOptions(data.managers, '', '<option value="">取消經管人</option>')) + '</select>';
   };
   $('#bField').onchange = fillValues;
   fillValues();
   $('#bGo').onclick = async (ev) => {
     const field = $('#bField').value;
     const value = $('#bValue').value;
-    const shown = field === '經管人' ? (value ? managerLabel(value, data.managers) : '（取消）') : value;
+    const shown = field === '經管人' ? (value ? managerLabel(value, data.managers) : '（取消）')
+      : field === '目前位置' && !value.trim() ? '（回到清冊位置）' : value;
     ev.target.disabled = true;
     try {
       const r = await api('asset.assign', {

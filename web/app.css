@@ -116,6 +116,9 @@ details .list { max-height: 360px; overflow-y: auto; }
 }
 .batchbar[hidden] { display: none; }
 .batchbar select { flex: 1; min-width: 0; }
+.batchbar #bField { flex: none; width: auto; }
+.batchbar .grow { flex: 1; min-width: 0; display: flex; }
+.batchbar .grow > * { flex: 1; min-width: 0; }
 table.kv { width: 100%; border-collapse: collapse; }
 table.kv th { text-align: left; font-weight: 500; color: var(--muted); font-size: .85rem; padding: 6px 10px 6px 0; width: 8.5em; vertical-align: top; }
 table.kv td { padding: 6px 0; word-break: break-all; }

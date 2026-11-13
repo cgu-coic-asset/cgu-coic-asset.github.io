@@ -59,7 +59,7 @@ function assetUpdate_(payload, actor) {
 }
 
 /**
- * 批次修改（經管人、開放借用）。
+ * 批次修改（目前位置、經管人、開放借用）。
  * payload：{ type, items: [{ rowKey, version }], field（預設經管人）, value（經管人空白＝取消）, reason }。
  */
 function assetAssign_(payload, actor) {
@@ -71,6 +71,7 @@ function assetAssign_(payload, actor) {
   const changes = {};
   changes[field] = payload.value !== undefined ? payload.value : (payload.manager || '');
   if (field === '開放借用' && !changes[field]) throw new AppError('BAD_REQUEST', '請選擇開放借用：是或否');
+  if (field === '目前位置') changes[field] = String(changes[field] || '').replace(/\s+/g, ' ').trim().slice(0, 100);
   validateAssetChanges_(changes);
 
   const sh = targetSheet_(t);
