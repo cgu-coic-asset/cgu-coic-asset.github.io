@@ -3,9 +3,11 @@
  * 可編輯欄位見 shared/assetList.js 的 ASSET_EDITABLE；其他欄位來自匯入或流程。
  */
 
-/** 啟用中的管理者（經管人選單用）。 */
+/** 啟用中的 Admin、Super（經管人選單用；User 不能當經管人）。 */
 function activeManagers_() {
-  return loadAdmins_().filter(function (a) { return a['狀態'] === '啟用'; })
+  return loadAdmins_().filter(function (a) {
+    return a['狀態'] === '啟用' && [ROLE_ADMIN, ROLE_SUPER].indexOf(normalizeLevel(a['等級'])) !== -1;
+  })
     .map(function (a) { return { email: normalizeEmail(a['Email']), name: a['姓名'] }; });
 }
 

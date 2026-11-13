@@ -8,12 +8,14 @@ function actions_() {
     'version': { handler: function () { return { version: APP_VERSION }; } },
     'whoami': {
       handler: function (payload, actor) {
-        return { email: actor.email, name: actor.name, role: actor.role, loggedIn: actor.loggedIn };
+        return { email: actor.email, name: actor.name, role: actor.role, loggedIn: actor.loggedIn, codes: actor.codes };
       },
     },
-    'admin.list': { perm: 'admin.manage', handler: adminList_ },
-    'admin.add': { perm: 'admin.manage', write: true, handler: adminAdd_ },
-    'admin.update': { perm: 'admin.manage', write: true, handler: adminUpdate_ },
+    // 帳號：Super 管全部，Admin 只能管 User（細部檢查在 Admin.js）
+    'admin.list': { perm: 'user.manage', handler: adminList_ },
+    'admin.add': { perm: 'user.manage', write: true, handler: adminAdd_ },
+    'admin.update': { perm: 'user.manage', write: true, handler: adminUpdate_ },
+    'my.assets': { perm: 'self.view', handler: myAssets_ },
     'asset.list': { perm: 'asset.view', handler: assetList_ },
     'asset.get': { perm: 'asset.view', handler: assetGet_ },
     'asset.update': { perm: 'asset.edit', write: true, handler: assetUpdate_ },

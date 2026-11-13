@@ -16,11 +16,7 @@ function importTarget_(type) {
 
 /** 資產分頁；缺少新加的欄位時先補上，否則寫入時會被略過。 */
 function targetSheet_(t) {
-  const sh = sheet_(t.book, t.sheet);
-  const want = SCHEMA[t.book].sheets[t.sheet];
-  const have = headers_(sh);
-  if (want.some(function (h) { return have.indexOf(h) === -1; })) ensureHeaders_(sh, want, []);
-  return sh;
+  return schemaSheet_(t.book, t.sheet);
 }
 
 /** 「設定」分頁的值；沒有就回傳空字串。 */

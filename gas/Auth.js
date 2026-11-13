@@ -37,7 +37,7 @@ function loadAdmins_() {
   const cached = cache.get(ADMIN_CACHE_KEY);
   if (cached) return JSON.parse(cached);
   const rows = readRows_(sheet_('SYSTEM', '管理者')).map(function (r) {
-    return { Email: r['Email'], 姓名: r['姓名'], 等級: r['等級'], 狀態: r['狀態'] };
+    return { Email: r['Email'], 姓名: r['姓名'], 等級: r['等級'], 狀態: r['狀態'], 保管人代號: r['保管人代號'] || '' };
   });
   cache.put(ADMIN_CACHE_KEY, JSON.stringify(rows), 60);
   return rows;
@@ -47,14 +47,15 @@ function clearAdminCache_() {
   CacheService.getScriptCache().remove(ADMIN_CACHE_KEY);
 }
 
-/** 取得這次請求的操作者：{ email, name, role, loggedIn }。沒帶 token 就是訪客。 */
+/** 取得這次請求的操作者：{ email, name, role, loggedIn, codes（綁定的保管人代號） }。沒帶 token 就是 Guest。 */
 function getActor_(req) {
-  if (!req.idToken) return { email: '', name: '', role: ROLE_VISITOR, loggedIn: false };
+  if (!req.idToken) return { email: '', name: '', role: ROLE_GUEST, loggedIn: false, codes: [] };
   const who = verifyIdToken_(req.idToken);
   const admins = loadAdmins_();
   const role = resolveRole(who.email, admins);
   const row = admins.find(function (r) { return normalizeEmail(r['Email']) === who.email; });
-  return { email: who.email, name: (row && row['姓名']) || who.name, role: role, loggedIn: true };
+  const codes = role === ROLE_GUEST || !row ? [] : parseCustodianCodes(row['保管人代號']);
+  return { email: who.email, name: (row && row['姓名']) || who.name, role: role, loggedIn: true, codes: codes };
 }
 
 function md5Hex_(text) {

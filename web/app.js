@@ -8,7 +8,7 @@ const TOKEN_KEY = 'asset.idToken';
 const state = { config: null, token: null, tokenExp: 0, me: guest() };
 
 function guest() {
-  return { email: '', name: '', role: ROLE_VISITOR, loggedIn: false };
+  return { email: '', name: '', role: ROLE_GUEST, loggedIn: false, codes: [] };
 }
 
 // ---------- 工具 ----------
@@ -125,7 +125,7 @@ function renderWho() {
   const box = $('#who');
   const me = state.me;
   if (me.loggedIn) {
-    const roleChip = me.role === ROLE_VISITOR ? '' : '<span class="chip accent">' + esc(me.role) + '</span>';
+    const roleChip = me.role === ROLE_GUEST ? '' : '<span class="chip accent" title="' + esc(ROLE_LABELS[me.role]) + '">' + esc(me.role) + '</span>';
     box.innerHTML = '<span class="name">' + esc(me.name || me.email) + '</span>' + roleChip +
       '<button type="button" id="signOut">登出</button>';
     $('#signOut').onclick = signOut;
@@ -151,7 +151,8 @@ function routeFromQr() {
 const routes = [
   { re: /^#?\/?$/, view: viewHome },
   { re: /^#\/asset\/([FC])\/(.+)$/, view: viewAsset },
-  { re: /^#\/admins$/, view: viewAdmins, perm: 'admin.manage' },
+  { re: /^#\/admins$/, view: viewAdmins, perm: 'user.manage' },
+  { re: /^#\/mine$/, view: viewMine, perm: 'self.view' },
   { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
   { re: /^#\/assets$/, view: viewAssets, perm: 'asset.view' },
 ];
@@ -183,7 +184,9 @@ function tile(href, title, sub, ready) {
 }
 
 function viewHome(view) {
-  const role = state.me.role;
+  const me = state.me;
+  const role = me.role;
+  const hasCodes = (me.codes || []).length > 0;
   let html = '';
   if (can(role, 'asset.view')) {
     html += '<h1>工作選單</h1><div class="grid">' +
@@ -193,19 +196,68 @@ function viewHome(view) {
       tile('#/loans', '借用', '申請、借出、歸還', false) +
       tile('#/import', '匯入', '學校清冊 Excel', true) +
       tile('#/cases', '異常案件', '登記與處理', false) +
+      (hasCodes ? tile('#/mine', '我名下的財產', '保管人代號 ' + me.codes.join('、'), true) : '') +
+      (role === ROLE_ADMIN ? tile('#/admins', 'User 帳號', '綁定保管人代號', true) : '') +
       '</div>';
     if (can(role, 'admin.manage')) {
-      html += '<h1 style="margin-top:20px">系統（一等）</h1><div class="grid">' +
-        tile('#/admins', '管理者', '新增、停用', true) +
+      html += '<h1 style="margin-top:20px">系統（Super）</h1><div class="grid">' +
+        tile('#/admins', '帳號', 'Super、Admin、User', true) +
         tile('#/system', '備份與交接', '每月備份、交接包', false) +
         tile('#/logs', '操作紀錄', '查詢 LOG', false) +
         '</div>';
     }
+  } else if (role === ROLE_USER) {
+    html += '<h1>我的財產</h1><div class="grid">' +
+      tile('#/mine', '我名下的財產', hasCodes ? '保管人代號 ' + me.codes.join('、') : '尚未綁定保管人代號', true) +
+      tile('#/mine', '自行盤點', '盤點期間開放', false) +
+      '</div>';
   } else {
     html += '<h1>可借設備</h1><div class="card"><p class="muted" style="margin:0">設備清單建置中。' +
-      '管理者請按右上角登入。</p></div>';
+      '管理者與保管人請按右上角登入。' + (me.loggedIn ? '<br>您的帳號尚未開通，請聯絡系辦。' : '') + '</p></div>';
   }
   view.innerHTML = html;
+}
+
+// ----- 我名下的財產 -----
+
+async function viewMine(view) {
+  view.innerHTML = '<h1>我名下的財產</h1><p class="muted">載入中…</p>';
+  let data;
+  try {
+    data = await api('my.assets');
+  } catch (e) {
+    view.innerHTML = '<h1>我名下的財產</h1><div class="card"><p>' + esc(e.message) + '</p></div>';
+    return;
+  }
+  if (!data.codes.length) {
+    view.innerHTML = '<h1>我名下的財產</h1><div class="card"><p>您的帳號還沒有綁定保管人代號，請聯絡系辦設定。</p></div>';
+    return;
+  }
+  const type = storeGet('asset.mineType') === 'CUSTODY' ? 'CUSTODY' : 'FIXED';
+  view.innerHTML = '<h1>我名下的財產</h1><p class="meta muted">保管人代號 ' + esc(data.codes.join('、')) +
+    '，資料來自學校清冊（含所有部門）。若和實際不符，請聯絡系辦。</p><div class="tabs">' +
+    ['FIXED', 'CUSTODY'].map((t) => '<button type="button" data-type="' + t + '" class="' + (t === type ? 'on' : '') + '">' +
+      IMPORT_TEMPLATES[t].label + ' ' + data[t].length + '</button>').join('') + '</div>' +
+    '<div class="card"><input id="mQ" type="search" placeholder="搜尋名稱、編號、位置…"></div><div id="mList"></div>';
+  view.querySelectorAll('[data-type]').forEach((b) => {
+    b.onclick = () => { storeSet('asset.mineType', b.dataset.type); viewMine(view); };
+  });
+  const draw = () => {
+    const list = filterAssets(type, data[type], { q: $('#mQ').value });
+    $('#mList').innerHTML = '<div class="card"><ul class="list">' + (list.map((r) => {
+      const serial = displaySerial(r);
+      const lines = type === 'FIXED'
+        ? [assetKey(type, r), r['廠牌規格'], serial.text && (serial.isPurchaseNo ? '請購案號 ' : '序號 ') + serial.text]
+        : [r['材料編號'], '帳面 ' + r['帳面數量'] + ' ' + (r['單位'] || '')];
+      const lastCheck = r['最近盤點日'] ? '最近盤點 ' + fmtDate(r['最近盤點日']) +
+        (type === 'FIXED' ? ' ' + (r['最近盤點結果'] || '') : (r['最近盤點數量'] ? ' 實點 ' + r['最近盤點數量'] : '')) : '尚未盤點';
+      return '<li><strong>' + esc(assetName(type, r)) + '</strong><div class="meta">' + lines.filter(Boolean).map(esc).join('｜') +
+        '</div><div class="meta">位置：' + esc(currentLocation(r) || '未填') + '｜部門 ' + esc(r['部門代號']) + '｜' + esc(lastCheck) +
+        (r['經管人'] ? '｜經管 ' + esc(r['經管人']) : '') + '</div><div class="row chips">' + statusChips(r) + '</div></li>';
+    }).join('') || '<li class="muted">沒有資料</li>') + '</ul></div>';
+  };
+  $('#mQ').oninput = draw;
+  draw();
 }
 
 async function viewAsset(view, params) {
@@ -468,31 +520,44 @@ function drawAssetResults(type, data, ui) {
   };
 }
 
-// ----- 管理者 -----
+// ----- 帳號 -----
+
+function levelOptions(selected) {
+  const levels = state.me.role === ROLE_SUPER ? ACCOUNT_LEVELS : [ROLE_USER];
+  return levels.map((l) => '<option value="' + l + '"' + (l === selected ? ' selected' : '') + '>' + esc(ROLE_LABELS[l]) + '</option>').join('');
+}
 
 async function viewAdmins(view) {
-  view.innerHTML = '<h1>管理者</h1><p class="muted">載入中…</p>';
+  const isSuper = state.me.role === ROLE_SUPER;
+  const title = isSuper ? '帳號' : 'User 帳號';
+  view.innerHTML = '<h1>' + title + '</h1><p class="muted">載入中…</p>';
   let rows;
   try {
     rows = await api('admin.list');
   } catch (e) {
-    view.innerHTML = '<h1>管理者</h1><div class="card"><p>' + esc(e.message) + '</p></div>';
+    view.innerHTML = '<h1>' + title + '</h1><div class="card"><p>' + esc(e.message) + '</p></div>';
     return;
   }
+  const order = { Super: 0, Admin: 1, User: 2 };
+  rows.sort((a, b) => (order[a['等級']] ?? 3) - (order[b['等級']] ?? 3) || String(a['姓名']).localeCompare(String(b['姓名'])));
   const items = rows.map((a, i) =>
     '<li class="row spread"><div><div>' + esc(a['姓名'] || '（未填姓名）') + ' ' +
-    '<span class="chip accent">' + esc(a['等級']) + '</span> ' +
+    '<span class="chip accent">' + esc(ROLE_LABELS[a['等級']] || a['等級']) + '</span> ' +
     '<span class="chip ' + (a['狀態'] === '啟用' ? 'ok' : 'bad') + '">' + esc(a['狀態']) + '</span></div>' +
-    '<div class="meta">' + esc(a['Email']) + (a['備註'] ? '｜' + esc(a['備註']) : '') + '</div></div>' +
+    '<div class="meta">' + esc(a['Email']) + (a['保管人代號'] ? '｜保管人代號 ' + esc(a['保管人代號']) : '') +
+    (a['備註'] ? '｜' + esc(a['備註']) : '') + '</div></div>' +
     '<button type="button" data-edit="' + i + '">編輯</button></li>').join('');
 
-  view.innerHTML = '<h1>管理者</h1>' +
-    '<div class="card"><ul class="list">' + items + '</ul></div>' +
-    '<div class="card"><h2>新增管理者</h2><form id="addForm">' +
+  view.innerHTML = '<h1>' + title + '</h1>' +
+    '<div class="card"><p class="meta muted" style="margin-top:0">Super：系統管理（帳號、備份、紀錄）。Admin：管理者（入檔、盤點、借還）。' +
+    'User：保管人，只看得到綁定的保管人代號名下的財產，盤點期間可自行盤點。' + (isSuper ? '' : '您可以新增與修改 User 帳號。') + '</p>' +
+    '<ul class="list">' + (items || '<li class="muted">目前沒有帳號</li>') + '</ul></div>' +
+    '<div class="card"><h2>新增帳號</h2><form id="addForm">' +
     '<label for="aEmail">Google 帳號 Email</label><input id="aEmail" type="email" required autocomplete="off">' +
     '<label for="aName">姓名</label><input id="aName" required>' +
-    '<label for="aLevel">等級</label><select id="aLevel"><option>二等</option><option>一等</option></select>' +
-    '<label for="aNote">備註（例如：職員、工讀生）</label><input id="aNote">' +
+    '<label for="aLevel">等級</label><select id="aLevel">' + levelOptions(ROLE_USER) + '</select>' +
+    '<label for="aCodes">保管人代號（User 必填；多個用逗號分隔，例 D000000256）</label><input id="aCodes" autocomplete="off">' +
+    '<label for="aNote">備註（例如：職員、工讀生、教師）</label><input id="aNote">' +
     '<div class="row" style="margin-top:12px"><button class="primary" type="submit">新增</button></div></form></div>';
 
   view.querySelectorAll('[data-edit]').forEach((b) => {
@@ -503,7 +568,8 @@ async function viewAdmins(view) {
     const btn = ev.submitter; btn.disabled = true;
     try {
       await api('admin.add', {
-        email: $('#aEmail').value, name: $('#aName').value, level: $('#aLevel').value, note: $('#aNote').value,
+        email: $('#aEmail').value, name: $('#aName').value, level: $('#aLevel').value,
+        custodianCodes: $('#aCodes').value, note: $('#aNote').value,
       });
       toast('已新增');
       viewAdmins(view);
@@ -518,9 +584,10 @@ function editAdmin(a) {
   const dlg = $('#dialog');
   const form = $('#dialogForm');
   const opt = (list, v) => list.map((x) => '<option' + (x === v ? ' selected' : '') + '>' + x + '</option>').join('');
-  form.innerHTML = '<h2>編輯管理者</h2><div class="meta muted">' + esc(a['Email']) + '</div>' +
+  form.innerHTML = '<h2>編輯帳號</h2><div class="meta muted">' + esc(a['Email']) + '</div>' +
     '<label for="eName">姓名</label><input id="eName" value="' + esc(a['姓名']) + '">' +
-    '<label for="eLevel">等級</label><select id="eLevel">' + opt(['二等', '一等'], a['等級']) + '</select>' +
+    '<label for="eLevel">等級</label><select id="eLevel">' + levelOptions(a['等級']) + '</select>' +
+    '<label for="eCodes">保管人代號（多個用逗號分隔）</label><input id="eCodes" value="' + esc(a['保管人代號']) + '">' +
     '<label for="eStatus">狀態</label><select id="eStatus">' + opt(['啟用', '停用'], a['狀態']) + '</select>' +
     '<label for="eNote">備註</label><input id="eNote" value="' + esc(a['備註']) + '">' +
     '<label for="eReason">修改原因（會記入紀錄）</label><input id="eReason">' +
@@ -532,7 +599,10 @@ function editAdmin(a) {
     try {
       await api('admin.update', {
         email: a['Email'], version: a['版本'], reason: $('#eReason').value,
-        changes: { 姓名: $('#eName').value, 等級: $('#eLevel').value, 狀態: $('#eStatus').value, 備註: $('#eNote').value },
+        changes: {
+          姓名: $('#eName').value, 等級: $('#eLevel').value, 狀態: $('#eStatus').value, 備註: $('#eNote').value,
+          保管人代號: $('#eCodes').value,
+        },
       });
       dlg.close();
       toast('已儲存');

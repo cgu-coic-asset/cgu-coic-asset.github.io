@@ -18,6 +18,15 @@ function headers_(sh) {
   return sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
 }
 
+/** 取得分頁；缺少 Schema 新加的欄位時先補上，否則寫入時會被略過。 */
+function schemaSheet_(bookKey, name) {
+  const sh = sheet_(bookKey, name);
+  const want = SCHEMA[bookKey].sheets[name];
+  const have = headers_(sh);
+  if (want.some(function (h) { return have.indexOf(h) === -1; })) ensureHeaders_(sh, want, []);
+  return sh;
+}
+
 /** 讀整張分頁為物件陣列（以標題列為鍵）；每筆附 _row（試算表列號）。 */
 function readRows_(sh) {
   const values = sh.getDataRange().getValues();

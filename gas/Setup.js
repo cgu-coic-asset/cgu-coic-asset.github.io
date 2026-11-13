@@ -4,7 +4,7 @@
  * 可重複執行：已存在的東西一律沿用，只補缺少的部分，不刪任何資料。
  */
 
-/** 第一位一等管理者（用來登入系統的 Google 帳號，不是存放帳號）。只在管理者名單沒有一等時寫入。 */
+/** 第一位 Super（用來登入系統的 Google 帳號，不是存放帳號）。只在帳號名單沒有 Super 時寫入。 */
 const INITIAL_ADMIN_EMAIL = 'ericckfeng@gmail.com';
 
 function setup() {
@@ -169,11 +169,11 @@ function seedSettings_(sh, report) {
 }
 
 function seedFirstAdmin_(sh, report) {
-  const hasTop = readRows_(sh).some(function (r) { return r['等級'] === '一等' && r['狀態'] === '啟用'; });
-  if (hasTop) { report.push('沿用 一等管理者'); return; }
+  const hasTop = readRows_(sh).some(function (r) { return normalizeLevel(r['等級']) === ROLE_SUPER && r['狀態'] === '啟用'; });
+  if (hasTop) { report.push('沿用 Super'); return; }
   appendRow_(sh, {
-    'Email': INITIAL_ADMIN_EMAIL, '等級': '一等', '狀態': '啟用', '備註': '系統初始化建立',
+    'Email': INITIAL_ADMIN_EMAIL, '等級': ROLE_SUPER, '狀態': '啟用', '備註': '系統初始化建立',
     '版本': '1', '建立時間': now_(), '建立者': '系統初始化',
   });
-  report.push('建立 一等管理者 ' + INITIAL_ADMIN_EMAIL);
+  report.push('建立 Super ' + INITIAL_ADMIN_EMAIL);
 }
