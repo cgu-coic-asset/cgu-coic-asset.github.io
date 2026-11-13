@@ -10,7 +10,7 @@ if (typeof module !== 'undefined' && typeof ASSET_TYPES === 'undefined') {
  * 管理者可以在系統上直接改的欄位；其他欄位來自學校清冊（匯入）或由流程（借用、盤點、異常）更新。
  * 存放位置以學校清冊為準，只由匯入更新；實際位置不同時填目前位置。
  */
-var ASSET_EDITABLE = ['目前位置', '開放借用', '經管人', '備註'];
+var ASSET_EDITABLE = ['名稱修正', '目前位置', '開放借用', '經管人', '備註'];
 /** 系所物品是系所自建的，名稱、規格、系所編號也能改。 */
 var ITEM_EDITABLE = ['系所編號', '名稱', '規格', '目前位置', '開放借用', '經管人', '備註'];
 
@@ -59,13 +59,30 @@ function currentLocation(row) {
   return String(row['目前位置'] || '').trim() || String(row['存放位置'] || '');
 }
 
+/** 顯示用名稱：有名稱修正就用它（學校清冊缺字時自己修），否則用原名稱。 */
 function assetName(type, row) {
+  return (type !== 'ITEM' && String(row['名稱修正'] || '').trim()) || row[ASSET_TYPES[type].nameField];
+}
+
+/** 學校清冊上的原名稱。 */
+function sourceName(type, row) {
   return row[ASSET_TYPES[type].nameField];
+}
+
+/**
+ * 名稱取代：從目前顯示的名稱把 find 換成 replace，回傳新的名稱修正值；
+ * 結果和清冊原名稱相同時回傳空白（不需要修正）；找不到 find 回傳 null（不改）。
+ */
+function replaceNameFix(type, row, find, replace) {
+  const current = assetName(type, row) || '';
+  if (!find || current.indexOf(find) === -1) return null;
+  const next = current.split(find).join(replace || '');
+  return next === sourceName(type, row) ? '' : next;
 }
 
 var ASSET_SEARCH_FIELDS = [
   '資產編號', '資產名稱', '廠牌規格', '產品序號', '請購案號', '存放位置', '目前位置', '保管人代號', '保管人姓名',
-  '保管品鍵', '材料編號', '品名規格', '備註', '物品ID', '系所編號', '名稱', '規格',
+  '保管品鍵', '材料編號', '品名規格', '備註', '物品ID', '系所編號', '名稱', '規格', '名稱修正',
 ];
 
 /**
@@ -124,6 +141,6 @@ function distinctValues(rows, field) {
 if (typeof module !== 'undefined') {
   module.exports = {
     ASSET_EDITABLE, ITEM_EDITABLE, editableFields, ASSET_OPEN_VALUES, ASSET_BATCH_FIELDS, assetStatus, isLendable, isMoved, displaySerial, assetKey,
-    assetName, currentLocation, filterAssets, distinctValues,
+    assetName, sourceName, replaceNameFix, currentLocation, filterAssets, distinctValues,
   };
 }

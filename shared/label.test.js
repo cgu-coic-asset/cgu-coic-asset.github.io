@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { textWidth, splitLabelName, labelUrl, labelRow, toCsv } = require('./label.js');
+const { textWidth, splitLabelName, fitLabelName, labelColumns, labelUrl, labelRow, toCsv } = require('./label.js');
 
 const BASE = 'https://cgu-coic-asset.github.io/';
 
@@ -56,4 +56,13 @@ test('寬度可調整', () => {
 test('CSV：BOM、逗號、引號跳脫、CRLF', () => {
   const csv = toCsv([['a', 'b,c', 'd"e'], ['1', '', '中']]);
   assert.strictEqual(csv, '﻿a,"b,c","d""e"\r\n1,,中\r\n');
+});
+
+test('只印一行：截斷加「…」；欄位沒有 NAME2；名稱用修正後的', () => {
+  assert.strictEqual(fitLabelName('筆記型電腦', 32), '筆記型電腦');
+  const long = fitLabelName('AI電腦模組(AI及BIG DATA工作站與周邊系統)', 32);
+  assert.ok(textWidth(long) <= 32 && long.endsWith('…'), long);
+  assert.deepStrictEqual(labelColumns([32]), ['QR網址', '黑框', '編號', 'NAME1', '保管人']);
+  const r = labelRow(BASE, 'FIXED', { 資產編號: '0351360284', 資產名稱: '周邊 統', 名稱修正: '周邊系統', 部門代號: 'D000', 保管人姓名: '甲' }, null, [32]);
+  assert.deepStrictEqual(r, [BASE + '?F0351360284', 'D000', '0351360284', '周邊系統', '甲']);
 });

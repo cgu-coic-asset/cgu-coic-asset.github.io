@@ -122,3 +122,43 @@ function assetAssign_(payload, actor) {
   }
   return { updated: logs.length };
 }
+
+/**
+ * 批次取代名稱文字（學校清冊缺字、錯字時自己修）。固定資產、保管品寫到「名稱修正」，系所物品直接改「名稱」。
+ * payload：{ type, items: [{ rowKey, version }], find, replace, reason }。找不到 find 的列不改。
+ */
+function assetReplaceName_(payload, actor) {
+  const t = importTarget_(payload.type);
+  const find = String(payload.find || '');
+  if (!find) throw new AppError('BAD_REQUEST', '請輸入要找的文字');
+  const items = payload.items || [];
+  if (!items.length) throw new AppError('BAD_REQUEST', '請先勾選資產');
+  const field = payload.type === 'ITEM' ? '名稱' : '名稱修正';
+
+  const sh = targetSheet_(t);
+  const existing = readRows_(sh);
+  const byKey = {};
+  existing.forEach(function (r) { byKey[importRowKey(payload.type, r)] = r; });
+  const conflicts = items.filter(function (it) { return !byKey[it.rowKey] || checkVersion(byKey[it.rowKey], it.version); });
+  if (conflicts.length) throw new AppError('VERSION_CONFLICT', conflicts.length + ' 筆資料剛被修改過，請重新整理後再改');
+
+  const nowText = now_();
+  const logs = [];
+  items.forEach(function (it) {
+    const row = byKey[it.rowKey];
+    const value = replaceNameFix(payload.type, row, find, payload.replace);
+    if (value === null) return;
+    const changes = {};
+    changes[field] = payload.type === 'ITEM' ? (value || row['名稱']) : value;
+    if (payload.type === 'ITEM' && !String(changes[field]).trim()) return;
+    const result = applyChanges(row, changes, [field], actor.email, nowText);
+    if (!result.changed) return;
+    Object.assign(row, result.row);
+    logs.push({ action: '修正名稱', objectType: t.label, key: it.rowKey, before: result.before, after: result.after });
+  });
+  if (logs.length) {
+    writeAllRows_(sh, existing, []);
+    writeLogs_(actor, logs, payload.reason || '名稱取代：' + find + ' → ' + (payload.replace || '（刪除）'), '網頁');
+  }
+  return { updated: logs.length };
+}

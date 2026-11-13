@@ -27,6 +27,7 @@ function actions_() {
     'asset.list': { perm: 'asset.view', handler: assetList_ },
     'asset.get': { perm: 'asset.view', handler: assetGet_ },
     'asset.update': { perm: 'asset.edit', write: true, handler: assetUpdate_ },
+    'asset.replaceName': { perm: 'asset.edit', write: true, handler: assetReplaceName_ },
     'asset.assign': { perm: 'asset.edit', write: true, handler: assetAssign_ },
     'import.current': { perm: 'asset.import', handler: importCurrent_ },
     'import.commit': { perm: 'asset.import', write: true, handler: importCommit_ },

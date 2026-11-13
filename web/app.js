@@ -315,7 +315,7 @@ function renderAssetDetail(view, type, rows, managers, pieces) {
   let table;
   if (type === 'FIXED') {
     const linked = (pieces || [])[0];
-    table = kv('資產編號', esc(main['資產編號'])) +
+    table = (main['名稱修正'] ? kv('學校清冊名稱', esc(main['資產名稱'])) : '') + kv('資產編號', esc(main['資產編號'])) +
       (linked ? kv('系所編號', '<a class="code" href="#/asset/I/' + encodeURIComponent(linked['物品ID']) + '">' +
         esc(linked['系所編號'] || linked['物品ID']) + '</a>（系所借用）') : '') +
       kv('廠牌規格', esc(main['廠牌規格'])) +
@@ -340,7 +340,7 @@ function renderAssetDetail(view, type, rows, managers, pieces) {
       kv('目前位置', esc(main['目前位置'])) + kv('開放借用', esc(main['開放借用'] || '否')) +
       kv('最近盤點', esc(fmtDate(main['最近盤點日']) + ' ' + (main['最近盤點結果'] || ''))) + kv('備註', esc(main['備註']));
   } else {
-    table = kv('保管品鍵', esc(main['保管品鍵'])) + kv('材料編號', esc(main['材料編號'])) +
+    table = (main['名稱修正'] ? kv('學校清冊名稱', esc(main['品名規格'])) : '') + kv('保管品鍵', esc(main['保管品鍵'])) + kv('材料編號', esc(main['材料編號'])) +
       kv('帳面數量', esc(main['帳面數量'] + ' ' + (main['單位'] || ''))) + kv('部門', esc(main['部門代號'])) +
       kv('保管人', custodian) + kv('經管人', esc(managerLabel(main['經管人'], managers))) +
       locationRows(main, kv) + kv('開放借用', esc(main['開放借用'] || '否')) + kv('來源最後異動日', fmtDate(main['來源最後異動日'])) +
@@ -401,7 +401,8 @@ function editAsset(type, row, managers, done) {
         '<label for="eName">名稱</label><input id="eName" value="' + esc(row['名稱']) + '">' +
         '<label for="eSpec">規格</label><input id="eSpec" value="' + esc(row['規格']) + '">' +
         '<label for="eLoc">目前位置</label><input id="eLoc" value="' + esc(row['目前位置']) + '">'
-      : '<p class="meta muted">名稱、規格、保管人、存放位置以學校清冊為準，請用匯入更新。</p>' +
+      : '<p class="meta muted">規格、保管人、存放位置以學校清冊為準，請用匯入更新。清冊名稱有缺字錯字時，填「名稱修正」。</p>' +
+        '<label for="eFix">名稱修正（留空＝用清冊名稱）</label><input id="eFix" value="' + esc(row['名稱修正']) + '" placeholder="' + esc(sourceName(type, row)) + '">' +
         '<label for="eLoc">目前位置（實際放的地方；清冊：' + esc(row['存放位置'] || '未填') + '）</label>' +
         '<input id="eLoc" value="' + esc(row['目前位置']) + '" placeholder="和清冊相同就留空">') +
     '<label for="eOpen">開放借用</label><select id="eOpen">' + ASSET_OPEN_VALUES.map((v) =>
@@ -421,7 +422,7 @@ function editAsset(type, row, managers, done) {
         type, rowKey: importRowKey(type, row), version: row['版本'], reason: $('#eReason').value,
         changes: Object.assign(
           { 目前位置: $('#eLoc').value, 開放借用: $('#eOpen').value, 經管人: $('#eMgr').value, 備註: $('#eNote').value },
-          isItem ? { 系所編號: $('#eCode').value, 名稱: $('#eName').value, 規格: $('#eSpec').value } : {}),
+          isItem ? { 系所編號: $('#eCode').value, 名稱: $('#eName').value, 規格: $('#eSpec').value } : { 名稱修正: $('#eFix').value }),
       });
       dlg.close();
       toast('已儲存');
@@ -718,12 +719,12 @@ function drawAssetResults(type, data, ui) {
   $('#lResult').innerHTML = '<div class="row spread meta" style="margin:4px 2px 8px"><span>共 ' + list.length + ' 筆' +
     (canEdit ? '，已勾選 <strong id="selCount">' + ui.selected.size + '</strong> 筆' : '') + '</span>' +
     '<span class="row">' + (canEdit ? '<button type="button" id="selAll">全選篩選結果</button><button type="button" id="selNone">清除勾選</button>' : '') +
-    '<button type="button" id="lLabels" title="勾選的；沒勾選就是目前篩選結果">匯出貼紙 CSV</button></span>' +
+    '<button type="button" id="lLabels" title="勾選的；沒勾選就是目前篩選結果">匯出貼紙 Excel</button></span>' +
     '</div><div class="card"><ul class="list">' + (items || '<li class="muted">沒有符合的資料</li>') + '</ul>' +
     (list.length > ui.shown ? '<div class="center" style="margin-top:8px"><button type="button" id="lMore">再顯示 ' +
       Math.min(LIST_PAGE, list.length - ui.shown) + ' 筆（還有 ' + (list.length - ui.shown) + '）</button></div>' : '') + '</div>' +
     (canEdit ? '<div class="batchbar" id="batchBar"' + (ui.selected.size ? '' : ' hidden') + '>' +
-      '<select id="bField" aria-label="要改的欄位">' + (type === 'ITEM' ? ['系所編號'] : type === 'FIXED' ? ['建立系所物品'] : []).concat(ASSET_BATCH_FIELDS)
+      '<select id="bField" aria-label="要改的欄位">' + (type === 'ITEM' ? ['系所編號'] : type === 'FIXED' ? ['建立系所物品'] : []).concat(ASSET_BATCH_FIELDS, ['名稱取代'])
         .map((x) => '<option' + (x === ui.batchField ? ' selected' : '') + '>' + x + '</option>').join('') +
       '</select><span id="bValueBox" class="grow"></span><button class="primary" type="button" id="bGo">套用</button></div>' : '');
 
@@ -745,6 +746,11 @@ function drawAssetResults(type, data, ui) {
   $('#selNone').onclick = () => { ui.selected.clear(); drawAssetResults(type, data, ui); };
   const fillValues = () => {
     ui.batchField = $('#bField').value;
+    if (ui.batchField === '名稱取代') {
+      $('#bValueBox').innerHTML = '<input id="bFind" placeholder="找（例：周邊 統）" autocomplete="off">' +
+        '<input id="bValue" placeholder="換成（例：周邊系統）" autocomplete="off">';
+      return;
+    }
     if (ui.batchField === '系所編號' || ui.batchField === '建立系所物品') {
       $('#bValueBox').innerHTML = '<input id="bValue" placeholder="前綴，例 COIC、CB（依勾選順序接續編號' +
         (ui.batchField === '建立系所物品' ? '；留空之後再編' : '') + '）" autocomplete="off">';
@@ -768,6 +774,21 @@ function drawAssetResults(type, data, ui) {
     const shown = field === '經管人' ? (value ? managerLabel(value, data.managers) : '（取消）')
       : field === '目前位置' && !value.trim() ? '（回到清冊位置）' : value;
     ev.target.disabled = true;
+    if (field === '名稱取代') {
+      try {
+        const r = await api('asset.replaceName', {
+          type, find: $('#bFind').value, replace: value, items: [...ui.selected].map((k) => ({ rowKey: k, version: versions[k] })),
+        });
+        toast('已修正 ' + r.updated + ' 筆名稱');
+        ui.selected.clear();
+        await loadAssets(type, true);
+      } catch (e) {
+        toast(e.message, true);
+        if (e.code === 'VERSION_CONFLICT') await loadAssets(type, true).catch(() => {});
+      }
+      renderAssetList(type, state.assets[type], ui);
+      return;
+    }
     if (field === '建立系所物品') {
       // 固定資產給學生借（例：Chromebook）：一對一建立系所物品，借還時會同步這件固定資產
       try {
@@ -816,22 +837,31 @@ function drawAssetResults(type, data, ui) {
 
 // ----- 貼紙 -----
 
-/** 匯出 BarTender 用的貼紙 CSV（QR 由 BarTender 產生）。 */
-function exportLabels(type, data, rows) {
+/**
+ * 匯出 BarTender 用的貼紙 Excel（QR 由 BarTender 產生）。
+ * 用 Excel 而不是 CSV：每格都存成文字，資產編號開頭的 0 不會被去掉。
+ */
+async function exportLabels(type, data, rows) {
   if (!rows.length) { toast('沒有要匯出的資料', true); return; }
+  try {
+    if (!window.XLSX) await loadScript(SHEETJS_URL);
+  } catch (e) {
+    toast(e.message, true);
+    return;
+  }
   const qrBase = state.config.qrBase || (location.origin + '/');
+  const widths = state.config.labelNameWidths || [32];
   const nameOf = (email) => managerLabel(email, data.managers);
-  const body = [LABEL_COLUMNS].concat(rows.map((r) => labelRow(qrBase, type, r, nameOf, state.config.labelNameWidths)));
-  const blob = new Blob([toCsv(body)], { type: 'text/csv;charset=utf-8' });
-  const a = document.createElement('a');
+  const body = [labelColumns(widths)].concat(rows.map((r) => labelRow(qrBase, type, r, nameOf, widths)));
+  const ws = XLSX.utils.aoa_to_sheet(body.map((r) => r.map((v) => String(v == null ? '' : v))));
+  // 每格標成文字格式（@），在 Excel 打開再存檔也不會變成數字
+  Object.keys(ws).forEach((k) => { if (k[0] !== '!') { ws[k].t = 's'; ws[k].z = '@'; } });
+  ws['!cols'] = body[0].map((h) => ({ wch: h === 'QR網址' ? 48 : h.startsWith('NAME') ? 34 : 14 }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '貼紙');
   const d = new Date();
   const ymd = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0');
-  a.href = URL.createObjectURL(blob);
-  a.download = '貼紙_' + ASSET_TYPES[type].label + '_' + ymd + '_' + rows.length + '筆.csv';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  XLSX.writeFile(wb, '貼紙_' + ASSET_TYPES[type].label + '_' + ymd + '_' + rows.length + '筆.xlsx');
   const noCode = type === 'ITEM' ? rows.filter((r) => !r['系所編號']).length : 0;
   toast('已匯出 ' + rows.length + ' 筆' + (noCode ? '（其中 ' + noCode + ' 筆還沒有系所編號）' : ''), noCode > 0);
 }

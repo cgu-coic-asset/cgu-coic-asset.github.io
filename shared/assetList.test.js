@@ -102,3 +102,15 @@ test('系所物品：鍵為物品ID、可改名稱與系所編號、搜尋得到
   assert.ok(!e('FIXED').includes('系所編號'));
   assert.strictEqual(filterAssets('ITEM', [item], { q: 'nx2-008' }).length, 1);
 });
+
+test('名稱修正：畫面用修正後的名稱；取代文字', () => {
+  const { assetName: n, replaceNameFix: rf } = require('./assetList.js');
+  const r = { 資產名稱: 'AI電腦模組(AI及BIG DATA工作站與周邊 統)' };
+  assert.strictEqual(n('FIXED', r), r['資產名稱']);
+  const fixed = rf('FIXED', r, '周邊 統', '周邊系統');
+  assert.strictEqual(fixed, 'AI電腦模組(AI及BIG DATA工作站與周邊系統)');
+  assert.strictEqual(n('FIXED', Object.assign({}, r, { 名稱修正: fixed })), fixed);
+  assert.strictEqual(rf('FIXED', r, '找不到', 'x'), null);
+  assert.strictEqual(rf('FIXED', Object.assign({}, r, { 名稱修正: fixed }), '周邊系統', '周邊 統'), '');
+  assert.strictEqual(n('ITEM', { 名稱: 'HDMI', 名稱修正: 'x' }), 'HDMI');
+});

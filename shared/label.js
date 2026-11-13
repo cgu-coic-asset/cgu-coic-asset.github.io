@@ -1,14 +1,21 @@
 /**
  * QR 貼紙 CSV（純邏輯，前後端共用）。QR 碼由 BarTender 依「QR網址」欄產生，系統只匯出資料。
- * 欄位：QR網址、黑框、編號、NAME1、NAME2、保管人（40×25 mm 雙排貼紙）。
- * 名稱分兩行：寬度以中文 2、英數 1 計，預設 NAME1 25、NAME2 16，可由 web/config.json 的 labelNameWidths 調整；超過以「…」結尾。
+ * 欄位：QR網址、黑框、編號、NAME1、（NAME2）、保管人（40×25 mm 雙排貼紙）。
+ * 名稱寬度以中文 2、英數 1 計，由 web/config.json 的 labelNameWidths 設定：[32] 只印一行，[32, 32] 印兩行；超過以「…」結尾。
+ * 名稱用 assetName（有名稱修正就用修正後的）。
  */
 
 if (typeof module !== 'undefined' && typeof ASSET_TYPES === 'undefined') {
   var ASSET_TYPES = require('./types.js').ASSET_TYPES;
+  var assetName = require('./assetList.js').assetName;
 }
 
 var LABEL_COLUMNS = ['QR網址', '黑框', '編號', 'NAME1', 'NAME2', '保管人'];
+
+/** 依名稱行數決定欄位（只有一行時沒有 NAME2）。 */
+function labelColumns(widths) {
+  return widths && widths.length === 1 ? ['QR網址', '黑框', '編號', 'NAME1', '保管人'] : LABEL_COLUMNS;
+}
 var LABEL_WIDTH1 = 25;
 var LABEL_WIDTH2 = 16;
 
@@ -58,6 +65,13 @@ function splitLabelName(text, width1, width2) {
   return [line1, restChars.slice(0, keep).join('').trim() + '…'];
 }
 
+/** 名稱只印一行：超過寬度就截斷並以「…」結尾。 */
+function fitLabelName(text, width) {
+  const chars = Array.from(String(text || '').replace(/\s+/g, ' ').trim());
+  if (textWidth(chars.join('')) <= width) return chars.join('');
+  return chars.slice(0, takeWidth_(chars, width - 2)).join('').trim() + '…';
+}
+
 /** QR 網址：<qrBase>?<F|C|I><鍵>。 */
 function labelUrl(qrBase, type, key) {
   const base = String(qrBase || '').replace(/\/?$/, '/');
@@ -83,11 +97,13 @@ function labelRow(qrBase, type, row, managerName, widths) {
   } else {
     box = row['部門代號'] || '';
     code = type === 'FIXED' ? row['資產編號'] : row['材料編號'];
-    name = type === 'FIXED' ? row['資產名稱'] : row['品名規格'];
+    name = assetName(type, row);
   }
-  const names = splitLabelName(name, widths && widths[0], widths && widths[1]);
   const key = row[ASSET_TYPES[type].keyField];
-  return [labelUrl(qrBase, type, key), box, code || '', names[0], names[1], custodian];
+  const head = [labelUrl(qrBase, type, key), box, code || ''];
+  if (widths && widths.length === 1) return head.concat([fitLabelName(name, widths[0]), custodian]);
+  const names = splitLabelName(name, widths && widths[0], widths && widths[1]);
+  return head.concat([names[0], names[1], custodian]);
 }
 
 /** 轉成 CSV（逗號分隔、CRLF、必要時加引號；開頭加 BOM 讓 Excel／BarTender 正確讀中文）。 */
@@ -101,6 +117,6 @@ function toCsv(rows) {
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    LABEL_COLUMNS, LABEL_WIDTH1, LABEL_WIDTH2, textWidth, splitLabelName, labelUrl, labelRow, toCsv,
+    LABEL_COLUMNS, LABEL_WIDTH1, LABEL_WIDTH2, labelColumns, textWidth, splitLabelName, fitLabelName, labelUrl, labelRow, toCsv,
   };
 }
