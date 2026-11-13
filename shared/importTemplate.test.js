@@ -34,7 +34,7 @@ test('標題可用別名、忽略空白，認不得的列出來', () => {
 test('範本欄名都在試算表欄位裡', () => {
   // 與 gas/Schema.js 的「資產」「保管品」分頁對照；改欄名時兩邊要一起改
   const fixed = ['資產編號', '增值次數', '資產名稱', '廠牌規格', '產品序號', '部門代號', '存放位置', '保管人代號',
-    '保管人姓名', '驗收取得日', '取得價值', '耐用年數', '保固期限', '研究計劃編號'];
+    '保管人姓名', '驗收取得日', '取得價值', '耐用年數', '保固期限', '研究計劃編號', '請購案號'];
   const custody = ['保管品鍵', '材料編號', '品名規格', '單位', '帳面數量', '部門代號', '保管人代號', '保管人姓名', '來源最後異動日'];
   IMPORT_TEMPLATES.FIXED.columns.forEach((c) => assert.ok(fixed.includes(c.name), c.name));
   IMPORT_TEMPLATES.CUSTODY.columns.forEach((c) => assert.ok(custody.includes(c.name), c.name));
@@ -66,7 +66,7 @@ test('固定資產：舊版 AI 轉出的 Excel 也能對應', () => {
   assert.strictEqual(rec['保管人姓名'], '馮建凱');
   assert.strictEqual(rec['驗收取得日'], '20230919');
   assert.strictEqual(rec['耐用年數'], '5');
-  assert.deepStrictEqual(warnings(r).map((i) => i.field), ['資產編號', '產品序號']);
+  assert.deepStrictEqual(warnings(r).map((i) => i.field), ['資產編號']);
   assert.deepStrictEqual(r.unknownColumns, ['ID', '類別']);
 });
 

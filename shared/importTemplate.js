@@ -26,6 +26,7 @@ var IMPORT_TEMPLATES = {
       { name: '耐用年數', kind: 'int', example: '3', aliases: ['耐用年限'] },
       { name: '保固期限', kind: 'date', example: '20270114', note: 'YYYYMMDD', aliases: ['保固到期日'] },
       { name: '研究計劃編號', kind: 'text', example: '', aliases: ['研究計畫編號'] },
+      { name: '請購案號', kind: 'code', example: 'Q40AA00001', note: '與產品序號是不同欄位；沒有產品序號的資產，畫面上以請購案號代替' },
     ],
   },
   CUSTODY: {
@@ -49,8 +50,6 @@ var IMPORT_COMBINED_CUSTODIAN = ['保管人', '保管人員'];
 
 var CUSTODIAN_CODE_RE = /^[A-Z][0-9]{9}$/;
 var FIXED_CODE_RE = /^[0-9A-Z*]{10}$/;
-/** 學校請購案號的樣子（例：Q40AG30001），曾被誤放進產品序號。 */
-var PURCHASE_NO_RE = /^[A-Z][0-9]{2}[0-9A-Z]{7}$/;
 
 function importHeaderKey_(text) {
   return String(text === null || text === undefined ? '' : text).replace(/[\s　]/g, '');
@@ -208,9 +207,6 @@ function parseImportRows(type, rows, options) {
       }
       if (rec['增值次數'] === '') rec['增值次數'] = '0';
       if (rec['部門代號'] === '') rec['部門代號'] = opts.defaultDept ? String(opts.defaultDept).toUpperCase() : '';
-      if (PURCHASE_NO_RE.test(rec['產品序號'])) {
-        add('產品序號', 'warning', '產品序號看起來像請購案號（' + rec['產品序號'] + '），請對照 PDF 確認');
-      }
     } else {
       if (rec['帳面數量'] !== '' && !(Number(rec['帳面數量']) > 0)) add('帳面數量', 'error', '帳面數量需大於 0');
       if (!rec['品名規格']) add('品名規格', 'warning', '沒有品名規格');
