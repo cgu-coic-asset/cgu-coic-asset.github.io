@@ -4,15 +4,20 @@ const { textWidth, splitLabelName, fitLabelName, labelColumns, labelUrl, labelRo
 
 const BASE = 'https://cgu-coic-asset.github.io/';
 
-test('寬度：中文 2、英數 1', () => {
-  assert.strictEqual(textWidth('AI電腦'), 6);
-  assert.strictEqual(textWidth('BIG DATA'), 8);
+test('寬度：中文 2，英數依字形（大寫 1.3、數字 1.1、窄字 0.6、寬字 1.8）', () => {
+  assert.strictEqual(textWidth('電腦'), 4);
+  assert.ok(Math.abs(textWidth('AB') - 2.6) < 1e-9);
+  assert.ok(Math.abs(textWidth('12') - 2.2) < 1e-9);
+  assert.ok(Math.abs(textWidth('il') - 1.2) < 1e-9);
+  assert.ok(Math.abs(textWidth('W') - 1.8) < 1e-9);
   assert.strictEqual(textWidth(''), 0);
+  assert.ok(textWidth('BIG DATA') > 8, '英文字比半個中文字寬');
 });
 
-test('名稱分兩行：使用者範例', () => {
-  assert.deepStrictEqual(splitLabelName('AI電腦模組(AI及BIG DATA工作站與周邊系統)'),
-    ['AI電腦模組(AI及BIG DATA工', '作站與周邊系統)']);
+test('名稱分兩行：每行寬度不超過', () => {
+  const [a, b] = splitLabelName('AI電腦模組(AI及BIG DATA工作站與周邊系統)');
+  assert.ok(textWidth(a) <= 25 && textWidth(b) <= 16, a + '/' + b);
+  assert.strictEqual((a + b).replace('…', '').length > 10, true);
 });
 
 test('短名稱只有第一行', () => {
@@ -50,7 +55,8 @@ test('各類型的欄位內容', () => {
 
 test('寬度可調整', () => {
   const r = labelRow(BASE, 'FIXED', { 資產編號: 'A', 資產名稱: 'AI電腦模組(AI及BIG DATA工作站與周邊系統)' }, null, [32, 32]);
-  assert.deepStrictEqual(r.slice(3, 5), ['AI電腦模組(AI及BIG DATA工作站與', '周邊系統)']);
+  assert.ok(textWidth(r[3]) <= 32 && textWidth(r[4]) <= 32);
+  assert.strictEqual(r[3] + r[4], 'AI電腦模組(AI及BIG DATA工作站與周邊系統)');
 });
 
 test('CSV：BOM、逗號、引號跳脫、CRLF', () => {

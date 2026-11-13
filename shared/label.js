@@ -1,7 +1,8 @@
 /**
  * QR 貼紙 CSV（純邏輯，前後端共用）。QR 碼由 BarTender 依「QR網址」欄產生，系統只匯出資料。
  * 欄位：QR網址、黑框、編號、NAME1、（NAME2）、保管人（40×25 mm 雙排貼紙）。
- * 名稱寬度以中文 2、英數 1 計，由 web/config.json 的 labelNameWidths 設定：[32] 只印一行，[32, 32] 印兩行；超過以「…」結尾。
+ * 名稱寬度以中文字為 2 計（英數字依字形約 0.6～1.8，見 charWidth），由 web/config.json 的 labelNameWidths 設定：
+ * [32] 只印一行，[32, 32] 印兩行；超過以「…」結尾。
  * 名稱用 assetName（有名稱修正就用修正後的）。
  */
 
@@ -20,10 +21,25 @@ function labelColumns(widths) {
 var LABEL_WIDTH1 = 25;
 var LABEL_WIDTH2 = 16;
 
-/** 字元寬度：ASCII 與半形字 1，其他（中文、全形）2。 */
+/**
+ * 字元寬度（中文字＝2）。一般比例字型裡英數字不是剛好中文的一半：
+ * 大寫約 1.3、小寫約 1.05、數字約 1.1，i l . 等窄字約 0.6，W M 等寬字約 1.8。
+ * 實印後覺得太長或太短，改 web/config.json 的寬度即可。
+ */
+var LABEL_NARROW = ' .,:;\'!|iljI';
+var LABEL_SEMI = '()[]{}-/frt"`';
+var LABEL_WIDE = 'WMmw@%';
+
 function charWidth(ch) {
   const c = ch.codePointAt(0);
-  return c < 0x1100 || (c >= 0xff61 && c <= 0xffdc) ? 1 : 2;
+  if (c >= 0x1100 && !(c >= 0xff61 && c <= 0xffdc)) return 2;
+  if (LABEL_NARROW.indexOf(ch) !== -1) return 0.6;
+  if (LABEL_SEMI.indexOf(ch) !== -1) return 0.75;
+  if (LABEL_WIDE.indexOf(ch) !== -1) return 1.8;
+  if (/[A-Z]/.test(ch)) return 1.3;
+  if (/[0-9]/.test(ch)) return 1.1;
+  if (/[a-z]/.test(ch)) return 1.05;
+  return 1;
 }
 
 function textWidth(text) {
