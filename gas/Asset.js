@@ -58,12 +58,19 @@ function assetUpdate_(payload, actor) {
   return publicRow_(result.row);
 }
 
-/** 批次指定經管人。payload：{ type, items: [{ rowKey, version }], manager（Email 或空白＝取消）, reason }。 */
+/**
+ * 批次修改（經管人、開放借用）。
+ * payload：{ type, items: [{ rowKey, version }], field（預設經管人）, value（經管人空白＝取消）, reason }。
+ */
 function assetAssign_(payload, actor) {
   const t = importTarget_(payload.type);
   const items = payload.items || [];
   if (!items.length) throw new AppError('BAD_REQUEST', '請先勾選資產');
-  const changes = { '經管人': payload.manager || '' };
+  const field = payload.field || '經管人';
+  if (ASSET_BATCH_FIELDS.indexOf(field) === -1) throw new AppError('BAD_REQUEST', '這個欄位不能批次修改：' + field);
+  const changes = {};
+  changes[field] = payload.value !== undefined ? payload.value : (payload.manager || '');
+  if (field === '開放借用' && !changes[field]) throw new AppError('BAD_REQUEST', '請選擇開放借用：是或否');
   validateAssetChanges_(changes);
 
   const sh = targetSheet_(t);
@@ -77,17 +84,17 @@ function assetAssign_(payload, actor) {
     if (!row || checkVersion(row, it.version)) conflicts.push(it.rowKey);
   });
   if (conflicts.length) {
-    throw new AppError('VERSION_CONFLICT', conflicts.length + ' 筆資料剛被修改過，請重新整理後再指定', { keys: conflicts.slice(0, 20) });
+    throw new AppError('VERSION_CONFLICT', conflicts.length + ' 筆資料剛被修改過，請重新整理後再改', { keys: conflicts.slice(0, 20) });
   }
 
   const nowText = now_();
   const logs = [];
   items.forEach(function (it) {
     const row = byKey[it.rowKey];
-    const result = applyChanges(row, changes, ['經管人'], actor.email, nowText);
+    const result = applyChanges(row, changes, [field], actor.email, nowText);
     if (!result.changed) return;
     Object.assign(row, result.row);
-    logs.push({ action: '指定經管人', objectType: t.label, key: it.rowKey, before: result.before, after: result.after });
+    logs.push({ action: '批次修改' + field, objectType: t.label, key: it.rowKey, before: result.before, after: result.after });
   });
   if (logs.length) {
     writeAllRows_(sh, existing, []);

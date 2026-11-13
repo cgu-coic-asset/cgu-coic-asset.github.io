@@ -293,9 +293,18 @@ function managerLabel(email, managers) {
 }
 
 function statusChips(r) {
-  return '<span class="chip ' + (r['狀態'] === '可借' ? 'ok' : 'bad') + '">' + esc(r['狀態'] || '—') + '</span> ' +
-    (r['開放借用'] === '是' ? '<span class="chip accent">開放借用</span> ' : '') +
+  const st = assetStatus(r);
+  const stClass = st === '在庫' ? '' : st === '借出' ? 'accent' : 'bad';
+  return '<span class="chip ' + stClass + '">' + esc(st) + '</span> ' +
+    (isLendable(r) ? '<span class="chip ok">可借</span> '
+      : r['開放借用'] === '是' ? '<span class="chip">開放借用</span> ' : '') +
+    (isMoved(r) ? '<span class="chip warn">已移位</span> ' : '') +
     (r['來源狀態'] === '待確認' ? '<span class="chip warn">清冊沒有・待確認</span> ' : '');
+}
+
+/** 清單上的位置文字：已移位時同時列出清冊位置。 */
+function locationText(r) {
+  return isMoved(r) ? '目前 ' + r['目前位置'] + '（清冊 ' + (r['存放位置'] || '未填') + '）' : (r['存放位置'] || '');
 }
 
 function renderAssetDetail(view, type, rows, managers) {
@@ -312,14 +321,14 @@ function renderAssetDetail(view, type, rows, managers) {
       kv('經管人', esc(managerLabel(main['經管人'], managers))) +
       kv('驗收取得日', fmtDate(main['驗收取得日'])) + kv('耐用年數', esc(main['耐用年數'])) +
       kv('保固期限', fmtDate(main['保固期限'])) + kv('取得價值', esc(main['取得價值'])) +
-      kv('研究計劃編號', esc(main['研究計劃編號'])) +
+      kv('研究計劃編號', esc(main['研究計劃編號'])) + kv('開放借用', esc(main['開放借用'] || '否')) +
       kv('最近盤點', esc(fmtDate(main['最近盤點日']) + ' ' + (main['最近盤點結果'] || ''))) +
       kv('備註', esc(main['備註']));
   } else {
     table = kv('保管品鍵', esc(main['保管品鍵'])) + kv('材料編號', esc(main['材料編號'])) +
       kv('帳面數量', esc(main['帳面數量'] + ' ' + (main['單位'] || ''))) + kv('部門', esc(main['部門代號'])) +
       kv('保管人', custodian) + kv('經管人', esc(managerLabel(main['經管人'], managers))) +
-      locationRows(main, kv) + kv('來源最後異動日', fmtDate(main['來源最後異動日'])) +
+      locationRows(main, kv) + kv('開放借用', esc(main['開放借用'] || '否')) + kv('來源最後異動日', fmtDate(main['來源最後異動日'])) +
       kv('最近點數', esc(fmtDate(main['最近盤點日']) + (main['最近盤點數量'] ? ' 實點 ' + main['最近盤點數量'] : ''))) +
       kv('備註', esc(main['備註']));
   }
@@ -445,8 +454,11 @@ function renderAssetList(type, data, ui) {
     sel('fStatus', '狀態', distinctValues(rows, '狀態'), '<option value="">狀態：不限</option>') +
     sel('fDept', '部門代號', distinctValues(rows, '部門代號'), '<option value="">部門：不限</option>') +
     sel('fCust', '保管人代號', distinctValues(rows, '保管人代號'), '<option value="">保管人：不限</option>') +
-    sel('fLoc', '存放位置', distinctValues(rows, '存放位置'), '<option value="">位置：不限</option>') +
-    '<label class="radio"><input type="checkbox" id="fMissing"' + (f['待確認'] ? ' checked' : '') + '> 只看清冊沒有（待確認）</label>' +
+    sel('fLoc', '位置', distinctValues(rows, '位置'), '<option value="">位置（實際）：不限</option>') +
+    sel('fOpen', '開放借用', [{ value: '可借', label: '現在可借' }, { value: '是', label: '開放借用：是' }, { value: '否', label: '開放借用：否' }],
+      '<option value="">開放借用：不限</option>') +
+    '<label class="radio"><input type="checkbox" data-c="已移位"' + (f['已移位'] ? ' checked' : '') + '> 只看實際位置和清冊不同</label>' +
+    '<label class="radio"><input type="checkbox" data-c="待確認"' + (f['待確認'] ? ' checked' : '') + '> 只看清冊沒有（待確認）</label>' +
     '</div></div><div id="lResult"></div>';
 
   const update = () => { ui.shown = LIST_PAGE; drawAssetResults(type, data, ui); };
@@ -455,7 +467,9 @@ function renderAssetList(type, data, ui) {
   document.querySelectorAll('#lBody select[data-f]').forEach((el) => {
     el.onchange = () => { f[el.dataset.f] = el.value; update(); };
   });
-  $('#fMissing').onchange = () => { f['待確認'] = $('#fMissing').checked; update(); };
+  document.querySelectorAll('#lBody input[data-c]').forEach((el) => {
+    el.onchange = () => { f[el.dataset.c] = el.checked; update(); };
+  });
   drawAssetResults(type, data, ui);
 }
 
@@ -467,8 +481,8 @@ function drawAssetResults(type, data, ui) {
     const k = importRowKey(type, r);
     const serial = displaySerial(r);
     const meta = type === 'FIXED'
-      ? [currentLocation(r), r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
-      : [r['帳面數量'] + ' ' + (r['單位'] || ''), r['保管人姓名'] || r['保管人代號'], currentLocation(r) || r['部門代號']];
+      ? [locationText(r), r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
+      : [r['帳面數量'] + ' ' + (r['單位'] || ''), r['保管人姓名'] || r['保管人代號'], locationText(r) || r['部門代號']];
     const mgr = managerLabel(r['經管人'], data.managers);
     return '<li class="asset-item">' +
       (canEdit ? '<input type="checkbox" data-k="' + esc(k) + '" data-v="' + esc(r['版本']) + '"' + (ui.selected.has(k) ? ' checked' : '') + ' aria-label="勾選">' : '') +
@@ -483,9 +497,9 @@ function drawAssetResults(type, data, ui) {
     '</div><div class="card"><ul class="list">' + (items || '<li class="muted">沒有符合的資料</li>') + '</ul>' +
     (list.length > ui.shown ? '<div class="center" style="margin-top:8px"><button type="button" id="lMore">再顯示 ' +
       Math.min(LIST_PAGE, list.length - ui.shown) + ' 筆（還有 ' + (list.length - ui.shown) + '）</button></div>' : '') + '</div>' +
-    (canEdit ? '<div class="batchbar" id="batchBar"' + (ui.selected.size ? '' : ' hidden') + '><select id="bMgr">' +
-      managerOptions(data.managers, '', '<option value="">取消經管人</option>') + '</select>' +
-      '<button class="primary" type="button" id="bGo">指定經管人</button></div>' : '');
+    (canEdit ? '<div class="batchbar" id="batchBar"' + (ui.selected.size ? '' : ' hidden') + '>' +
+      '<select id="bField" aria-label="要改的欄位">' + ASSET_BATCH_FIELDS.map((x) => '<option' + (x === ui.batchField ? ' selected' : '') + '>' + x + '</option>').join('') +
+      '</select><select id="bValue" aria-label="改成"></select><button class="primary" type="button" id="bGo">套用</button></div>' : '');
 
   if ($('#lMore')) $('#lMore').onclick = () => { ui.shown += LIST_PAGE; drawAssetResults(type, data, ui); };
   if (!canEdit) return;
@@ -500,14 +514,23 @@ function drawAssetResults(type, data, ui) {
   });
   $('#selAll').onclick = () => { list.forEach((r) => ui.selected.add(importRowKey(type, r))); drawAssetResults(type, data, ui); };
   $('#selNone').onclick = () => { ui.selected.clear(); drawAssetResults(type, data, ui); };
+  const fillValues = () => {
+    ui.batchField = $('#bField').value;
+    $('#bValue').innerHTML = ui.batchField === '開放借用'
+      ? '<option value="是">是（開放借用）</option><option value="否">否（不外借）</option>'
+      : managerOptions(data.managers, '', '<option value="">取消經管人</option>');
+  };
+  $('#bField').onchange = fillValues;
+  fillValues();
   $('#bGo').onclick = async (ev) => {
-    const manager = $('#bMgr').value;
-    const who = manager ? managerLabel(manager, data.managers) : '（取消）';
+    const field = $('#bField').value;
+    const value = $('#bValue').value;
+    const shown = field === '經管人' ? (value ? managerLabel(value, data.managers) : '（取消）') : value;
     ev.target.disabled = true;
     try {
       const r = await api('asset.assign', {
-        type, manager, items: [...ui.selected].map((k) => ({ rowKey: k, version: versions[k] })),
-        reason: '批次指定經管人：' + who,
+        type, field, value, items: [...ui.selected].map((k) => ({ rowKey: k, version: versions[k] })),
+        reason: '批次修改' + field + '：' + shown,
       });
       toast('已更新 ' + r.updated + ' 筆');
       ui.selected.clear();

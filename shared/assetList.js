@@ -8,6 +8,28 @@
  */
 var ASSET_EDITABLE = ['目前位置', '開放借用', '經管人', '備註'];
 var ASSET_OPEN_VALUES = ['是', '否'];
+/** 可以在清單勾選多筆一次修改的欄位。 */
+var ASSET_BATCH_FIELDS = ['經管人', '開放借用'];
+
+/**
+ * 狀態：在庫、借出、停借、報廢（由借還、異常流程改變）。
+ * 舊資料匯入時寫的是「可借」，視為在庫。「能不能借」另看開放借用。
+ */
+function assetStatus(row) {
+  const v = String(row['狀態'] || '').trim();
+  return !v || v === '可借' ? '在庫' : v;
+}
+
+/** 現在可以外借：開放借用為「是」且在庫。 */
+function isLendable(row) {
+  return row['開放借用'] === '是' && assetStatus(row) === '在庫';
+}
+
+/** 實際位置和清冊不同（有填目前位置且不一樣）。 */
+function isMoved(row) {
+  const now = String(row['目前位置'] || '').trim();
+  return !!now && now !== String(row['存放位置'] || '').trim();
+}
 
 /** 產品序號空白或 N/A 時，以請購案號代替。回傳 { text, isPurchaseNo }。 */
 function displaySerial(row) {
@@ -37,7 +59,7 @@ var ASSET_SEARCH_FIELDS = [
 ];
 
 /**
- * 篩選。f：{ q, 狀態, 部門代號, 保管人代號, 存放位置, 經管人, 待確認 }；
+ * 篩選。f：{ q, 狀態, 部門代號, 保管人代號, 位置（實際位置）, 已移位, 開放借用, 經管人, 待確認 }；
  * 經管人：'' 不限、'me' 我經管的、'none' 未指定，其他值為 Email。
  * 固定資產的增值紀錄（增值次數不是 0）不另列，併在主紀錄。
  */
@@ -50,10 +72,13 @@ function filterAssets(type, rows, f, myEmail) {
 
   return rows.filter(function (r) {
     if (type === 'FIXED' && String(r['增值次數'] || '0') !== '0' && mainCodes[r['資產編號']]) return false;
-    if (filters['狀態'] && r['狀態'] !== filters['狀態']) return false;
+    if (filters['狀態'] && assetStatus(r) !== filters['狀態']) return false;
+    if (filters['開放借用'] === '可借' && !isLendable(r)) return false;
+    if (filters['開放借用'] && filters['開放借用'] !== '可借' && (r['開放借用'] || '否') !== filters['開放借用']) return false;
     if (filters['部門代號'] && r['部門代號'] !== filters['部門代號']) return false;
     if (filters['保管人代號'] && r['保管人代號'] !== filters['保管人代號']) return false;
-    if (filters['存放位置'] && r['存放位置'] !== filters['存放位置']) return false;
+    if (filters['位置'] && currentLocation(r) !== filters['位置']) return false;
+    if (filters['已移位'] && !isMoved(r)) return false;
     if (filters['待確認'] && r['來源狀態'] !== '待確認') return false;
     const mgr = String(r['經管人'] || '').toLowerCase();
     if (filters['經管人'] === 'me' && (!me || mgr !== me)) return false;
@@ -67,11 +92,14 @@ function filterAssets(type, rows, f, myEmail) {
   });
 }
 
-/** 篩選選單用：某欄位出現過的值（排序、去空白）；保管人回傳 [{ value: 代號, label: 代號 姓名 }]。 */
+/**
+ * 篩選選單用：某欄位出現過的值（排序、去空白）；保管人回傳 [{ value: 代號, label: 代號 姓名 }]。
+ * field 為「位置」時取實際位置，「狀態」時取整理後的狀態。
+ */
 function distinctValues(rows, field) {
   const seen = {};
   rows.forEach(function (r) {
-    const v = r[field];
+    const v = field === '位置' ? currentLocation(r) : field === '狀態' ? assetStatus(r) : r[field];
     if (v && !seen[v]) seen[v] = field === '保管人代號' ? (r['保管人姓名'] ? v + ' ' + r['保管人姓名'] : v) : v;
   });
   return Object.keys(seen).sort().map(function (v) { return { value: v, label: seen[v] }; });
@@ -79,6 +107,7 @@ function distinctValues(rows, field) {
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    ASSET_EDITABLE, ASSET_OPEN_VALUES, displaySerial, assetKey, assetName, currentLocation, filterAssets, distinctValues,
+    ASSET_EDITABLE, ASSET_OPEN_VALUES, ASSET_BATCH_FIELDS, assetStatus, isLendable, isMoved, displaySerial, assetKey,
+    assetName, currentLocation, filterAssets, distinctValues,
   };
 }

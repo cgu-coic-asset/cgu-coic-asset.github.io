@@ -94,7 +94,7 @@ function importCommit_(payload, actor) {
   });
   const newRows = diff.added.map(function (r) {
     const row = stampNew(Object.assign({}, r, {
-      '狀態': '可借', '開放借用': '否', '來源狀態': SOURCE_OK, '最後匯入批次': batchId,
+      '狀態': '在庫', '開放借用': '否', '來源狀態': SOURCE_OK, '最後匯入批次': batchId,
     }), actor.email, nowText);
     logs.push(['匯入新增', importRowKey(payload.type, r), '', r]);
     return row;
