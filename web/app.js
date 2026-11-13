@@ -256,7 +256,7 @@ function renderAssetDetail(view, type, rows, managers) {
     table = kv('資產編號', esc(main['資產編號'])) + kv('廠牌規格', esc(main['廠牌規格'])) +
       kv(serial.isPurchaseNo ? '請購案號（無產品序號）' : '產品序號', esc(serial.text)) +
       (serial.isPurchaseNo ? '' : kv('請購案號', esc(main['請購案號']))) +
-      kv('部門', esc(main['部門代號'])) + kv('存放位置', esc(main['存放位置'])) + kv('保管人', custodian) +
+      kv('部門', esc(main['部門代號'])) + locationRows(main, kv) + kv('保管人', custodian) +
       kv('經管人', esc(managerLabel(main['經管人'], managers))) +
       kv('驗收取得日', fmtDate(main['驗收取得日'])) + kv('耐用年數', esc(main['耐用年數'])) +
       kv('保固期限', fmtDate(main['保固期限'])) + kv('取得價值', esc(main['取得價值'])) +
@@ -267,7 +267,7 @@ function renderAssetDetail(view, type, rows, managers) {
     table = kv('保管品鍵', esc(main['保管品鍵'])) + kv('材料編號', esc(main['材料編號'])) +
       kv('帳面數量', esc(main['帳面數量'] + ' ' + (main['單位'] || ''))) + kv('部門', esc(main['部門代號'])) +
       kv('保管人', custodian) + kv('經管人', esc(managerLabel(main['經管人'], managers))) +
-      kv('存放位置', esc(main['存放位置'])) + kv('來源最後異動日', fmtDate(main['來源最後異動日'])) +
+      locationRows(main, kv) + kv('來源最後異動日', fmtDate(main['來源最後異動日'])) +
       kv('最近點數', esc(fmtDate(main['最近盤點日']) + (main['最近盤點數量'] ? ' 實點 ' + main['最近盤點數量'] : ''))) +
       kv('備註', esc(main['備註']));
   }
@@ -297,6 +297,13 @@ function renderAssetDetail(view, type, rows, managers) {
   });
 }
 
+/** 清冊的存放位置與實際的目前位置；兩者不同時都列出。 */
+function locationRows(row, kv) {
+  const now = String(row['目前位置'] || '').trim();
+  if (!now || now === row['存放位置']) return kv('存放位置', esc(row['存放位置']));
+  return kv('目前位置', '<strong>' + esc(now) + '</strong>') + kv('存放位置（清冊）', esc(row['存放位置']));
+}
+
 function managerOptions(managers, selected, extra) {
   return (extra || '') + managers.map((m) => '<option value="' + esc(m.email) + '"' +
     (m.email === String(selected || '').toLowerCase() ? ' selected' : '') + '>' + esc(m.name || m.email) + '</option>').join('');
@@ -306,8 +313,9 @@ function editAsset(type, row, managers, done) {
   const dlg = $('#dialog');
   const form = $('#dialogForm');
   form.innerHTML = '<h2>編輯 ' + esc(assetKey(type, row)) + '</h2>' +
-    '<p class="meta muted">名稱、規格、保管人等以學校清冊為準，請用匯入更新。</p>' +
-    '<label for="eLoc">存放位置</label><input id="eLoc" value="' + esc(row['存放位置']) + '">' +
+    '<p class="meta muted">名稱、規格、保管人、存放位置以學校清冊為準，請用匯入更新。</p>' +
+    '<label for="eLoc">目前位置（實際放的地方；清冊：' + esc(row['存放位置'] || '未填') + '）</label>' +
+    '<input id="eLoc" value="' + esc(row['目前位置']) + '" placeholder="和清冊相同就留空">' +
     '<label for="eOpen">開放借用</label><select id="eOpen">' + ASSET_OPEN_VALUES.map((v) =>
       '<option' + (v === (row['開放借用'] || '否') ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>' +
     '<label for="eMgr">經管人（實際負責保管、借用的管理者）</label><select id="eMgr">' +
@@ -323,7 +331,7 @@ function editAsset(type, row, managers, done) {
     try {
       const updated = await api('asset.update', {
         type, rowKey: importRowKey(type, row), version: row['版本'], reason: $('#eReason').value,
-        changes: { 存放位置: $('#eLoc').value, 開放借用: $('#eOpen').value, 經管人: $('#eMgr').value, 備註: $('#eNote').value },
+        changes: { 目前位置: $('#eLoc').value, 開放借用: $('#eOpen').value, 經管人: $('#eMgr').value, 備註: $('#eNote').value },
       });
       dlg.close();
       toast('已儲存');
@@ -407,8 +415,8 @@ function drawAssetResults(type, data, ui) {
     const k = importRowKey(type, r);
     const serial = displaySerial(r);
     const meta = type === 'FIXED'
-      ? [r['存放位置'], r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
-      : [r['帳面數量'] + ' ' + (r['單位'] || ''), r['保管人姓名'] || r['保管人代號'], r['存放位置'] || r['部門代號']];
+      ? [currentLocation(r), r['保管人姓名'] || r['保管人代號'], serial.text && (serial.isPurchaseNo ? '請購 ' : 'S/N ') + serial.text]
+      : [r['帳面數量'] + ' ' + (r['單位'] || ''), r['保管人姓名'] || r['保管人代號'], currentLocation(r) || r['部門代號']];
     const mgr = managerLabel(r['經管人'], data.managers);
     return '<li class="asset-item">' +
       (canEdit ? '<input type="checkbox" data-k="' + esc(k) + '" data-v="' + esc(r['版本']) + '"' + (ui.selected.has(k) ? ' checked' : '') + ' aria-label="勾選">' : '') +

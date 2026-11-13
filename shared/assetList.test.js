@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { displaySerial, assetKey, filterAssets, distinctValues } = require('./assetList.js');
+const { displaySerial, assetKey, currentLocation, filterAssets, distinctValues } = require('./assetList.js');
 
 const rows = [
   { 資產編號: '0300000001', 增值次數: '0', 資產名稱: '筆記型電腦', 廠牌規格: 'ACME X14', 部門代號: 'D000', 存放位置: 'A室',
@@ -42,6 +42,13 @@ test('經管人：我經管的、未指定、指定某人', () => {
 test('狀態、部門、待確認可組合', () => {
   assert.deepStrictEqual(codes(filterAssets('FIXED', rows, { 部門代號: 'D100', 待確認: true })), ['0300000002#0']);
   assert.deepStrictEqual(codes(filterAssets('FIXED', rows, { 狀態: '可借', 部門代號: 'D100' })), ['0300000003#1']);
+});
+
+test('目前位置：有填就用，搜尋也找得到', () => {
+  assert.strictEqual(currentLocation({ 存放位置: 'A室', 目前位置: '' }), 'A室');
+  assert.strictEqual(currentLocation({ 存放位置: 'A室', 目前位置: 'C倉庫' }), 'C倉庫');
+  const moved = rows.map((r, i) => (i === 2 ? Object.assign({}, r, { 目前位置: 'C倉庫' }) : r));
+  assert.deepStrictEqual(codes(filterAssets('FIXED', moved, { q: 'c倉庫' })), ['0300000002#0']);
 });
 
 test('篩選選單的值', () => {

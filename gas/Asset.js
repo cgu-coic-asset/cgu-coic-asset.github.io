@@ -43,7 +43,7 @@ function assetUpdate_(payload, actor) {
   const changes = Object.assign({}, payload.changes || {});
   validateAssetChanges_(changes);
 
-  const sh = sheet_(t.book, t.sheet);
+  const sh = targetSheet_(t);
   const current = readRows_(sh).find(function (r) { return importRowKey(payload.type, r) === payload.rowKey; });
   if (!current) throw new AppError('NOT_FOUND');
   const conflict = checkVersion(current, payload.version);
@@ -64,7 +64,7 @@ function assetAssign_(payload, actor) {
   const changes = { '經管人': payload.manager || '' };
   validateAssetChanges_(changes);
 
-  const sh = sheet_(t.book, t.sheet);
+  const sh = targetSheet_(t);
   const existing = readRows_(sh);
   const byKey = {};
   existing.forEach(function (r) { byKey[importRowKey(payload.type, r)] = r; });

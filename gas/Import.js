@@ -14,6 +14,15 @@ function importTarget_(type) {
   return t;
 }
 
+/** 資產分頁；缺少新加的欄位時先補上，否則寫入時會被略過。 */
+function targetSheet_(t) {
+  const sh = sheet_(t.book, t.sheet);
+  const want = SCHEMA[t.book].sheets[t.sheet];
+  const have = headers_(sh);
+  if (want.some(function (h) { return have.indexOf(h) === -1; })) ensureHeaders_(sh, want, []);
+  return sh;
+}
+
 /** 「設定」分頁的值；沒有就回傳空字串。 */
 function setting_(key) {
   const row = findRow_(sheet_('SYSTEM', '設定'), '鍵', key);
@@ -44,8 +53,7 @@ function importCommit_(payload, actor) {
   const parsed = parseImportRows(payload.type, payload.rows, { defaultDept: setting_('部門代號') });
   if (!parsed.records.length) throw new AppError('BAD_REQUEST', '沒有可以匯入的資料，請先修正錯誤');
 
-  const sh = sheet_(t.book, t.sheet);
-  ensureHeaders_(sh, SCHEMA[t.book].sheets[t.sheet], []);
+  const sh = targetSheet_(t);
   const existing = readRows_(sh);
   const diff = diffImport(payload.type, parsed.records, parsed.fields, existing);
   if (diffSignature(diff) !== payload.signature) {
