@@ -20,3 +20,6 @@ _site/
 
 # deploy.sh 從 shared/ 複製進來的檔案
 gas/shared_*.js
+
+# 例外：匯入範例檔（資料全為虛構，由 tools/make-import-templates.py 產生）
+!docs/匯入範本/*.xlsx

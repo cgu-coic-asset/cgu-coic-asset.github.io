@@ -12,6 +12,8 @@
 | `web/` | 前端網頁（GitHub Pages） |
 | `shared/` | 前後端共用的純 JavaScript 業務邏輯（有單元測試） |
 | `gas/` | Apps Script 後端，以 clasp 推送到專用 Google 帳號 |
+| `docs/` | 重建步驟、[Excel 匯入範本](docs/匯入範本.md)與範例檔 |
+| `tools/` | 開發用小工具（例：產生匯入範例檔） |
 
 推送到 `main` 後，GitHub Actions 會把 `web/` 與 `shared/` 部署到 GitHub Pages。
 
