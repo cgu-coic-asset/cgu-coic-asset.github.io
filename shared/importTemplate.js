@@ -120,7 +120,8 @@ function custodyKey(custodianCode, materialCode) {
 /**
  * 整理並檢查匯入資料。
  * rows：每列為「檔案標題 → 值」；options.defaultDept：固定資產沒填部門代號時使用。
- * 回傳 { records, issues, unknownColumns }；issues 每筆 { row（Excel 列號）, field, level: error|warning, message }。
+ * 回傳 { records, fields, issues, unknownColumns }；issues 每筆 { row（Excel 列號）, field, level: error|warning, message }。
+ * fields：檔案裡實際有的範本欄位；匯入時只比對、更新這些欄位（檔案沒有的欄位不會清空系統資料）。
  * 有 error 的列不放進 records。
  */
 function parseImportRows(type, rows, options) {
@@ -143,7 +144,13 @@ function parseImportRows(type, rows, options) {
     if (col.name === '保管人代號' && mappedNames.indexOf('保管人') !== -1) return;
     issues.push({ row: 1, field: col.name, level: 'error', message: '缺少必要欄位「' + col.name + '」' });
   });
-  if (issues.length) return { records: [], issues: issues, unknownColumns: mapping.unknown };
+  if (issues.length) return { records: [], fields: [], issues: issues, unknownColumns: mapping.unknown };
+
+  const fields = template.columns.map(function (c) { return c.name; }).filter(function (name) {
+    if (mappedNames.indexOf(name) !== -1) return true;
+    return mappedNames.indexOf('保管人') !== -1 && (name === '保管人代號' || name === '保管人姓名');
+  });
+  if (type === 'CUSTODY') fields.push('保管品鍵');
 
   rows.forEach(function (raw, index) {
     const rowNo = index + 2;
@@ -236,7 +243,7 @@ function parseImportRows(type, rows, options) {
     if (!rowIssues.some(function (i) { return i.level === 'error'; })) records.push(rec);
   });
 
-  return { records: records, issues: issues, unknownColumns: mapping.unknown };
+  return { records: records, fields: fields, issues: issues, unknownColumns: mapping.unknown };
 }
 
 if (typeof module !== 'undefined') {

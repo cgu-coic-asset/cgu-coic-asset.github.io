@@ -14,6 +14,8 @@ function actions_() {
     'admin.list': { perm: 'admin.manage', handler: adminList_ },
     'admin.add': { perm: 'admin.manage', write: true, handler: adminAdd_ },
     'admin.update': { perm: 'admin.manage', write: true, handler: adminUpdate_ },
+    'import.current': { perm: 'asset.import', handler: importCurrent_ },
+    'import.commit': { perm: 'asset.import', write: true, handler: importCommit_ },
   };
 }
 

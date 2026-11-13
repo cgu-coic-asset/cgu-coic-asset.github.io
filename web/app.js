@@ -152,6 +152,7 @@ const routes = [
   { re: /^#?\/?$/, view: viewHome },
   { re: /^#\/asset\/([FC])\/(.+)$/, view: viewAsset },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'admin.manage' },
+  { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
 ];
 
 function render() {
@@ -189,7 +190,7 @@ function viewHome(view) {
       tile('#/assets', '資產清單', '查詢與編輯', false) +
       tile('#/inventory', '盤點', '年度與不定期', false) +
       tile('#/loans', '借用', '申請、借出、歸還', false) +
-      tile('#/import', '匯入', '學校清冊 Excel', false) +
+      tile('#/import', '匯入', '學校清冊 Excel', true) +
       tile('#/cases', '異常案件', '登記與處理', false) +
       '</div>';
     if (can(role, 'admin.manage')) {
@@ -297,6 +298,152 @@ function editAdmin(a) {
     render();
   };
   dlg.showModal();
+}
+
+// ----- 匯入 -----
+
+const SHEETJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+const IMPORT_SHOW_MAX = 300;
+
+function loadScript(url) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement('script');
+    el.src = url;
+    el.onload = resolve;
+    el.onerror = () => reject(new Error('無法載入 Excel 讀取元件，請確認網路後再試'));
+    document.head.appendChild(el);
+  });
+}
+
+/** 讀 Excel 第一個分頁為「標題 → 文字」的列；日期轉成 yyyy/mm/dd 文字。 */
+async function readExcel(file) {
+  if (!window.XLSX) await loadScript(SHEETJS_URL);
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false, dateNF: 'yyyy/mm/dd' });
+  let bin = '';
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return { rows, base64: btoa(bin), sheetName: wb.SheetNames[0] };
+}
+
+async function viewImport(view) {
+  const type = storeGet('asset.importType') === 'CUSTODY' ? 'CUSTODY' : 'FIXED';
+  view.innerHTML = '<h1>匯入學校清冊</h1>' +
+    '<div class="card"><div class="row">' +
+    ['FIXED', 'CUSTODY'].map((t) => '<label class="radio"><input type="radio" name="iType" value="' + t + '"' +
+      (t === type ? ' checked' : '') + '> ' + IMPORT_TEMPLATES[t].label + '</label>').join('') +
+    '</div><label for="iFile">Excel 檔（格式見匯入範本；PDF 請先用轉檔程式轉成 Excel）</label>' +
+    '<input id="iFile" type="file" accept=".xlsx,.xls">' +
+    '<p class="muted small">只會比對、更新檔案裡有的欄位；系統上的狀態、經管人、備註、照片不會被改。' +
+    '檔案沒有的資料只標成「待確認」，不會刪除。</p></div>' +
+    '<div id="iPreview"></div><div id="iBatches"></div>';
+  view.querySelectorAll('[name=iType]').forEach((r) => {
+    r.onchange = () => { storeSet('asset.importType', r.value); viewImport(view); };
+  });
+  $('#iFile').onchange = () => { if ($('#iFile').files[0]) previewImport(type, $('#iFile').files[0]); };
+  try {
+    const cur = await api('import.current', { type });
+    renderBatches(cur.batches);
+  } catch (e) {
+    $('#iBatches').innerHTML = '<div class="card"><p>' + esc(e.message) + '</p></div>';
+  }
+}
+
+function renderBatches(batches) {
+  if (!batches.length) { $('#iBatches').innerHTML = ''; return; }
+  $('#iBatches').innerHTML = '<div class="card"><h2>最近的匯入</h2><ul class="list">' + batches.map((b) =>
+    '<li><div>' + esc(b['批次編號']) + ' <span class="chip">' + esc(b['狀態']) + '</span></div><div class="meta">' +
+    esc(b['匯入時間']) + '｜' + esc(b['匯入者']) + '｜' + esc(b['來源檔名']) + '｜新增 ' + esc(b['新增數']) +
+    '、變更 ' + esc(b['變更數']) + '、待確認 ' + esc(b['消失數']) + '</div></li>').join('') + '</ul></div>';
+}
+
+async function previewImport(type, file) {
+  const box = $('#iPreview');
+  box.innerHTML = '<div class="card"><p class="muted">讀取與比對中…</p></div>';
+  let excel, cur;
+  try {
+    [excel, cur] = await Promise.all([readExcel(file), api('import.current', { type })]);
+  } catch (e) {
+    box.innerHTML = '<div class="card"><p>' + esc(e.message) + '</p></div>';
+    return;
+  }
+  const parsed = parseImportRows(type, excel.rows, { defaultDept: cur.defaultDept });
+  const errors = parsed.issues.filter((i) => i.level === 'error');
+  const warnings = parsed.issues.filter((i) => i.level === 'warning');
+  const issueList = (list) => '<ul class="list">' + list.slice(0, IMPORT_SHOW_MAX).map((i) =>
+    '<li class="meta">第 ' + i.row + ' 列｜' + esc(i.field) + '｜' + esc(i.message) + '</li>').join('') +
+    more(list.length) + '</ul>';
+
+  let html = '<div class="card"><h2>' + esc(file.name) + '</h2><div class="meta">分頁「' + esc(excel.sheetName) + '」，' +
+    excel.rows.length + ' 列；可匯入 ' + parsed.records.length + ' 筆</div>';
+  if (parsed.unknownColumns.length) {
+    html += '<p class="meta">略過的欄位：' + esc(parsed.unknownColumns.join('、')) + '</p>';
+  }
+  if (errors.length) {
+    html += '<details open><summary><span class="chip bad">錯誤 ' + errors.length + '</span> 這些列不會匯入，請修正檔案後重新選擇</summary>' +
+      issueList(errors) + '</details>';
+  }
+  if (warnings.length) {
+    html += '<details><summary><span class="chip warn">提醒 ' + warnings.length + '</span> 可以匯入，但請先看過</summary>' +
+      issueList(warnings) + '</details>';
+  }
+  html += '</div>';
+  if (!parsed.records.length) { box.innerHTML = html; return; }
+
+  const diff = diffImport(type, parsed.records, parsed.fields, cur.rows);
+  const signature = diffSignature(diff);
+  const nameField = type === 'FIXED' ? '資產名稱' : '品名規格';
+  const showKey = (k) => esc(k.replace(/#0$/, '').replace('#', '（增值 ') + (/#[1-9]/.test(k) ? '）' : ''));
+  const section = (title, chipClass, list, line) => '<details' + (list.length && list.length <= 20 ? ' open' : '') +
+    '><summary><span class="chip ' + chipClass + '">' + title + ' ' + list.length + '</span></summary><ul class="list">' +
+    list.slice(0, IMPORT_SHOW_MAX).map(line).join('') + more(list.length) + '</ul></details>';
+
+  html += '<div class="card"><h2>與系統比對</h2><div class="meta">比對範圍：部門 ' + esc(diff.scope.join('、') || '（無）') +
+    '；其他部門的資料不受影響。未變 ' + diff.unchanged + ' 筆。</div>' +
+    section('新增', 'ok', diff.added, (r) => '<li><strong>' + showKey(importRowKey(type, r)) + '</strong> ' +
+      esc(r[nameField]) + '<div class="meta">' + esc(r['保管人姓名'] || r['保管人代號']) + '｜' + esc(r['存放位置'] || r['部門代號']) + '</div></li>') +
+    section('變更', 'accent', diff.changed, (c) => '<li><strong>' + showKey(c.key) + '</strong><div class="meta">' +
+      Object.keys(c.after).map((f) => esc(f) + '：' + esc(c.before[f] || '（空白）') + ' → ' + esc(c.after[f] || '（空白）')).join('<br>') +
+      '</div></li>') +
+    section('檔案沒有 → 標為待確認', 'bad', diff.missing, (m) => '<li><strong>' + showKey(m.key) + '</strong> ' + esc(m.name) + '</li>');
+
+  const total = diff.added.length + diff.changed.length + diff.missing.length;
+  if (!total) {
+    html += '<p>系統資料和檔案一致，不需要匯入。</p></div>';
+    box.innerHTML = html;
+    return;
+  }
+  html += '<label for="iReason">說明（選填，會記入紀錄；例：115 年 3 月財產目錄）</label><input id="iReason">' +
+    '<div class="row" style="margin-top:12px"><button class="primary" id="iGo">確認匯入（新增 ' + diff.added.length +
+    '、變更 ' + diff.changed.length + '、待確認 ' + diff.missing.length + '）</button></div></div>';
+  box.innerHTML = html;
+
+  $('#iGo').onclick = async (ev) => {
+    ev.target.disabled = true;
+    ev.target.textContent = '寫入中，請勿關閉頁面…';
+    try {
+      const r = await api('import.commit', {
+        type, fileName: file.name, fileBase64: excel.base64, rows: excel.rows, signature, reason: $('#iReason').value,
+      });
+      box.innerHTML = '<div class="card"><h2>匯入完成</h2><p>批次 ' + esc(r.batchId) + '：新增 ' + r.added + '、變更 ' +
+        r.changed + '、待確認 ' + r.missing + '、未變 ' + r.unchanged + '。</p><p class="meta">原始檔已存到雲端「匯入檔」資料夾，' +
+        '每筆變更都已寫入操作紀錄。</p></div>';
+      $('#iFile').value = '';
+      toast('匯入完成');
+      renderBatches((await api('import.current', { type })).batches);
+    } catch (e) {
+      toast(e.message, true);
+      ev.target.disabled = false;
+      ev.target.textContent = '重新預覽';
+      ev.target.onclick = () => previewImport(type, file);
+    }
+  };
+}
+
+function more(n) {
+  return n > IMPORT_SHOW_MAX ? '<li class="meta">…另有 ' + (n - IMPORT_SHOW_MAX) + ' 筆未列出</li>' : '';
 }
 
 // ---------- 啟動 ----------

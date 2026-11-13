@@ -20,20 +20,29 @@ function logSheet_() {
  * source：網頁、排程、系統。
  */
 function writeLog_(actor, action, objectType, objectKey, before, after, reason, source) {
+  writeLogs_(actor, [{ action: action, objectType: objectType, key: objectKey, before: before, after: after }],
+    reason, source);
+}
+
+/** 一次寫多筆 LOG（匯入等大量變更用）。entries：[{ action, objectType, key, before, after }]。 */
+function writeLogs_(actor, entries, reason, source) {
+  if (!entries.length) return;
   const text = function (v) {
     if (v === undefined || v === null || v === '') return '';
     return (typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 45000);
   };
-  appendRow_(logSheet_(), {
-    '時間': now_(),
-    '操作者Email': actor.email || '',
-    '操作者姓名': actor.name || '',
-    '動作': action,
-    '對象類型': objectType,
-    '對象鍵': objectKey || '',
-    '改前': text(before),
-    '改後': text(after),
-    '原因': reason || '',
-    '來源': source || '網頁',
+  const time = now_();
+  const rows = entries.map(function (e) {
+    const o = {
+      '時間': time, '操作者Email': actor.email || '', '操作者姓名': actor.name || '', '動作': e.action,
+      '對象類型': e.objectType, '對象鍵': e.key || '', '改前': text(e.before), '改後': text(e.after),
+      '原因': reason || '', '來源': source || '網頁',
+    };
+    return LOG_COLUMNS.map(function (h) { return o[h]; });
   });
+  const sh = logSheet_();
+  const start = sh.getLastRow() + 1;
+  const needed = start + rows.length - 1;
+  if (sh.getMaxRows() < needed) sh.insertRowsAfter(sh.getMaxRows(), needed - sh.getMaxRows() + 100);
+  sh.getRange(start, 1, rows.length, LOG_COLUMNS.length).setNumberFormat('@').setValues(rows);
 }
