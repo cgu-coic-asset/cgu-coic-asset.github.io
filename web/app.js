@@ -821,7 +821,7 @@ function exportLabels(type, data, rows) {
   if (!rows.length) { toast('沒有要匯出的資料', true); return; }
   const qrBase = state.config.qrBase || (location.origin + '/');
   const nameOf = (email) => managerLabel(email, data.managers);
-  const body = [LABEL_COLUMNS].concat(rows.map((r) => labelRow(qrBase, type, r, nameOf)));
+  const body = [LABEL_COLUMNS].concat(rows.map((r) => labelRow(qrBase, type, r, nameOf, state.config.labelNameWidths)));
   const blob = new Blob([toCsv(body)], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   const d = new Date();

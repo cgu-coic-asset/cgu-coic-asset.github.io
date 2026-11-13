@@ -48,6 +48,11 @@ test('各類型的欄位內容', () => {
   assert.deepStrictEqual(hdmi.slice(1), ['COIC-001', '', 'HDMI 線 3M', '', '我']);
 });
 
+test('寬度可調整', () => {
+  const r = labelRow(BASE, 'FIXED', { 資產編號: 'A', 資產名稱: 'AI電腦模組(AI及BIG DATA工作站與周邊系統)' }, null, [32, 32]);
+  assert.deepStrictEqual(r.slice(3, 5), ['AI電腦模組(AI及BIG DATA工作站與', '周邊系統)']);
+});
+
 test('CSV：BOM、逗號、引號跳脫、CRLF', () => {
   const csv = toCsv([['a', 'b,c', 'd"e'], ['1', '', '中']]);
   assert.strictEqual(csv, '﻿a,"b,c","d""e"\r\n1,,中\r\n');

@@ -1,7 +1,7 @@
 /**
  * QR 貼紙 CSV（純邏輯，前後端共用）。QR 碼由 BarTender 依「QR網址」欄產生，系統只匯出資料。
  * 欄位：QR網址、黑框、編號、NAME1、NAME2、保管人（40×25 mm 雙排貼紙）。
- * 名稱分兩行：寬度以中文 2、英數 1 計，NAME1 約 25、NAME2 約 16（右側有圓圈），超過以「…」結尾。
+ * 名稱分兩行：寬度以中文 2、英數 1 計，預設 NAME1 25、NAME2 16，可由 web/config.json 的 labelNameWidths 調整；超過以「…」結尾。
  */
 
 if (typeof module !== 'undefined' && typeof ASSET_TYPES === 'undefined') {
@@ -68,9 +68,9 @@ function labelUrl(qrBase, type, key) {
  * 一筆資料轉成貼紙欄位。
  * 固定資產：黑框＝部門、編號＝資產編號；保管品：黑框＝部門、編號＝材料編號；
  * 系所物品：黑框＝系所編號、編號＝連結的資產編號或材料編號（無帳留白）、保管人沒有時用經管人。
- * managerName：Email → 姓名（系所物品沒有保管人時用）。
+ * managerName：Email → 姓名（系所物品沒有保管人時用）；widths：[NAME1 寬度, NAME2 寬度]。
  */
-function labelRow(qrBase, type, row, managerName) {
+function labelRow(qrBase, type, row, managerName, widths) {
   let box;
   let code;
   let name;
@@ -85,7 +85,7 @@ function labelRow(qrBase, type, row, managerName) {
     code = type === 'FIXED' ? row['資產編號'] : row['材料編號'];
     name = type === 'FIXED' ? row['資產名稱'] : row['品名規格'];
   }
-  const names = splitLabelName(name);
+  const names = splitLabelName(name, widths && widths[0], widths && widths[1]);
   const key = row[ASSET_TYPES[type].keyField];
   return [labelUrl(qrBase, type, key), box, code || '', names[0], names[1], custodian];
 }
