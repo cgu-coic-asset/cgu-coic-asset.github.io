@@ -432,3 +432,28 @@ function loanReturn_(payload, actor) {
   });
   return loanGet_({ id: id });
 }
+
+/** 首頁提醒（Admin、Super）。 */
+function loanReminders_() {
+  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const r = loanReminders(readRows_(loanSheet_()), today, setting_('申請提醒天數'));
+  const slim = function (x) {
+    const l = x.loan;
+    return { id: l['借用單號'], name: l['借用人姓名'], phone: l['手機'], from: l['預計借出日'], due: l['預計歸還日'], applied: l['申請時間'], days: x.days };
+  };
+  return { stale: r.stale.map(slim), overdue: r.overdue.map(slim) };
+}
+
+/** 清單用：借出中的系所物品 → { 單號, 預計歸還日, 逾期 }。 */
+function itemLoanInfo_() {
+  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const loans = {};
+  readRows_(loanSheet_()).forEach(function (l) { if (l['狀態'] === LOAN_OUT) loans[l['借用單號']] = l; });
+  const out = {};
+  readRows_(loanDetailSheet_()).forEach(function (d) {
+    const l = loans[d['借用單號']];
+    if (!l || d['狀態'] !== DETAIL_OUT) return;
+    out[d['資產鍵']] = { id: l['借用單號'], due: l['預計歸還日'], overdue: isLoanOverdue(l, today) };
+  });
+  return out;
+}

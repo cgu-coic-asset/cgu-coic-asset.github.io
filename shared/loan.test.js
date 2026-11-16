@@ -105,3 +105,17 @@ test('歸還檢查：可分批、還錯件擋、照片、狀況與說明', () =>
   assert.strictEqual(L.statusAfterReturn(0), '在庫');
   assert.strictEqual(L.statusAfterReturn(1), '停借');
 });
+
+test('首頁提醒：申請中超過 3 天、逾期未還', () => {
+  const loans = [
+    { '借用單號': 'A', '狀態': '申請中', '申請時間': '2026-11-10 09:00:00' },
+    { '借用單號': 'B', '狀態': '申請中', '申請時間': '2026-11-14 09:00:00' },
+    { '借用單號': 'C', '狀態': '借出中', '預計歸還日': '2026-11-16' },
+    { '借用單號': 'D', '狀態': '借出中', '預計歸還日': '2026-11-17' },
+    { '借用單號': 'E', '狀態': '已歸還', '預計歸還日': '2026-11-01' },
+  ];
+  const r = L.loanReminders(loans, '2026-11-17', '3');
+  assert.deepStrictEqual(r.stale.map((x) => [x.loan['借用單號'], x.days]), [['A', 7]]);
+  assert.deepStrictEqual(r.overdue.map((x) => [x.loan['借用單號'], x.days]), [['C', 1]]);
+  assert.strictEqual(L.isLoanOverdue(loans[3], '2026-11-17'), false);
+});

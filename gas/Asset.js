@@ -23,6 +23,7 @@ function assetList_(payload) {
   }
   out.inventory = inventoryInfo_(payload.type, null);
   out.openCases = openCaseCountsAll_();
+  if (payload.type === 'ITEM') out.loans = itemLoanInfo_();
   out.rows = rows;
   return out;
 }

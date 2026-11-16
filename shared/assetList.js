@@ -131,6 +131,10 @@ function filterAssets(type, rows, f, myEmail, counts, inventory) {
       const has = !!(c && c['建檔']);
       if ((filters['建檔照片'] === '有') !== has) return false;
     }
+    if (filters['借用']) {
+      const ln = inventory && inventory.loans ? inventory.loans[assetKey(type, r)] : null;
+      if (!ln || (filters['借用'] === '逾期' && !ln.overdue)) return false;
+    }
     if (filters['異常案件'] === '處理中') {
       const n = inventory && inventory.openCases ? inventory.openCases[type + ':' + assetKey(type, r)] : 0;
       if (!n) return false;

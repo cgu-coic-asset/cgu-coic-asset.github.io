@@ -37,6 +37,7 @@ function actions_() {
     'loan.apply': { perm: 'loan.apply', write: true, handler: loanApply_ },
     'loan.lookup': { perm: 'loan.apply', handler: loanLookup_ },
     'loan.list': { perm: 'loan.manage', handler: loanList_ },
+    'loan.reminders': { perm: 'loan.manage', handler: loanReminders_ },
     'loan.get': { perm: 'loan.manage', handler: loanGet_ },
     'loan.photo': { perm: 'loan.manage', write: true, handler: loanPhoto_ },
     'loan.checkout': { perm: 'loan.manage', write: true, handler: loanCheckout_ },

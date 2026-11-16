@@ -245,8 +245,32 @@ function statusAfterReturn(openCaseCount) {
   return (openCaseCount || 0) > 0 ? '停借' : '在庫';
 }
 
+/** 借出中且預計歸還日已過（今天還不算逾期）。 */
+function isLoanOverdue(loan, today) {
+  return loan['狀態'] === LOAN_OUT && !!normalizeDate(loan['預計歸還日']) && loan['預計歸還日'] < today;
+}
+
+/**
+ * 首頁提醒：{ stale（申請中超過 remindDays 天，舊到新）, overdue（逾期未還，逾期最久的在前） }，每筆附 days。
+ */
+function loanReminders(loans, today, remindDays) {
+  const n = parseInt(remindDays, 10);
+  const limit = n > 0 ? n : 3;
+  const stale = [];
+  const overdue = [];
+  (loans || []).forEach(function (l) {
+    const age = applicationAgeDays(l, today);
+    if (age > limit) stale.push({ loan: l, days: age });
+    if (isLoanOverdue(l, today)) overdue.push({ loan: l, days: daysBetween(l['預計歸還日'], today) });
+  });
+  stale.sort(function (a, b) { return b.days - a.days; });
+  overdue.sort(function (a, b) { return b.days - a.days; });
+  return { stale: stale, overdue: overdue };
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
+    isLoanOverdue, loanReminders,
     RETURN_MIN_PHOTOS, RETURN_CONDITIONS, RETURN_CASE_TYPES, returnErrors, statusAfterReturn,
     CHECKOUT_MIN_PHOTOS, checkoutErrors,
     loanNotifyRecipients, loanMailContent,

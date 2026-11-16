@@ -37,3 +37,10 @@ test('處理中案件數與清單篩選', () => {
   assert.deepStrictEqual(keys, ['A', 'B']);
   assert.strictEqual(filterAssets('FIXED', rows, { '異常案件': '處理中' }, '', {}, null).length, 0);
 });
+
+test('清單借用篩選：借出中、逾期', () => {
+  const rows = [{ '物品ID': 'I1' }, { '物品ID': 'I2' }, { '物品ID': 'I3' }];
+  const info = { loans: { I1: { id: 'L1', due: '2026-11-01', overdue: true }, I2: { id: 'L2', due: '2026-12-01', overdue: false } } };
+  assert.deepStrictEqual(filterAssets('ITEM', rows, { '借用': '借出中' }, '', {}, info).map((r) => r['物品ID']), ['I1', 'I2']);
+  assert.deepStrictEqual(filterAssets('ITEM', rows, { '借用': '逾期' }, '', {}, info).map((r) => r['物品ID']), ['I1']);
+});

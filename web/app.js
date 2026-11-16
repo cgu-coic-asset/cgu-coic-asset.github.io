@@ -206,7 +206,7 @@ function viewHome(view) {
   const hasCodes = (me.codes || []).length > 0;
   let html = '';
   if (can(role, 'asset.view')) {
-    html += '<h1>工作選單</h1><div class="grid">' +
+    html += '<div id="reminders"></div><h1>工作選單</h1><div class="grid">' +
       tile('#/scan', '掃描 QR', '查看、盤點、借出', true) +
       tile('#/assets', '資產清單', '查詢、編輯、經管人', true) +
       tile('#/inventory', '盤點', '批次、進度、未盤清單', true) +
@@ -237,6 +237,20 @@ function viewHome(view) {
     return;
   }
   view.innerHTML = html;
+  if (can(role, 'loan.manage')) loadReminders();
+}
+
+/** 首頁提醒：申請中太久、逾期未還。 */
+async function loadReminders() {
+  let r;
+  try { r = await api('loan.reminders'); } catch (e) { return; }
+  const box = $('#reminders');
+  if (!box || (!r.stale.length && !r.overdue.length)) return;
+  const item = (x, text) => '<li><a href="#/loans/' + encodeURIComponent(x.id) + '"><strong>' + esc(x.id) + ' ' + esc(x.name) + '</strong></a>' +
+    '<div class="meta">' + text + '｜' + esc(x.phone) + '</div></li>';
+  box.innerHTML = '<div class="card"><h2>待處理</h2><ul class="list">' +
+    r.overdue.map((x) => item(x, '<span class="chip bad">逾期 ' + x.days + ' 天</span> 預計歸還 ' + esc(x.due))).join('') +
+    r.stale.map((x) => item(x, '<span class="chip warn">申請中 ' + x.days + ' 天</span> 預計借出 ' + esc(x.from))).join('') + '</ul></div>';
 }
 
 // ----- 可借設備清單（公開頁）-----
@@ -1080,6 +1094,7 @@ function renderAssetList(type, data, ui) {
     sel('fOpen', '開放借用', [{ value: '可借', label: '現在可借' }, { value: '是', label: '開放借用：是' }, { value: '否', label: '開放借用：否' }],
       '<option value="">開放借用：不限</option>') +
     sel('fCase', '異常案件', [{ value: '處理中', label: '異常案件：處理中' }], '<option value="">異常案件：不限</option>') +
+    (type === 'ITEM' ? sel('fLoan', '借用', [{ value: '借出中', label: '借用：借出中' }, { value: '逾期', label: '借用：逾期未還' }], '<option value="">借用：不限</option>') : '') +
     (data.inventory ? sel('fInv', '盤點', [{ value: '已盤', label: '本次已盤' }, { value: '未盤', label: '本次未盤（範圍內）' }, { value: '自行', label: '自行盤點' },
       { value: '退回', label: '被退回' }, { value: '異常', label: '結果異常' }], '<option value="">盤點（' + esc(data.inventory.batch['名稱']) + '）：不限</option>') : '') +
     '<label class="radio"><input type="checkbox" data-c="已移位"' + (f['已移位'] ? ' checked' : '') + '> 只看實際位置和清冊不同</label>' +
@@ -1100,7 +1115,7 @@ function renderAssetList(type, data, ui) {
 }
 
 function drawAssetResults(type, data, ui) {
-  const inv = { openCases: data.openCases || {} };
+  const inv = { openCases: data.openCases || {}, loans: data.loans || {} };
   if (data.inventory) { inv.results = data.inventory.results; inv.scope = data.invScope || (data.invScope = scopeKeys(type, data.rows, data.inventory.batch)); }
   const list = filterAssets(type, data.rows, ui.f, state.me.email, data.photoCounts, inv);
   if (type === 'ITEM') list.sort((a, b) => compareItemCodes(a['系所編號'], b['系所編號']) || (a['物品ID'] < b['物品ID'] ? -1 : 1));
@@ -1127,7 +1142,9 @@ function drawAssetResults(type, data, ui) {
       '<div class="meta">' + meta.filter(Boolean).map(esc).join('｜') + '</div>' +
       '<div class="row chips">' + statusChips(r) + (mgr ? '<span class="chip">經管：' + esc(mgr) + '</span>' : '') +
       (nPhoto ? '<span class="chip">建檔照片 ' + nPhoto + '</span>' : '') + (inv.results ? inventoryChips(inv.results[assetKey(type, r)]) : '') +
-      (inv.openCases[type + ':' + assetKey(type, r)] ? '<span class="chip bad">異常處理中</span>' : '') + '</div></a></li>';
+      (inv.openCases[type + ':' + assetKey(type, r)] ? '<span class="chip bad">異常處理中</span>' : '') +
+      (inv.loans[assetKey(type, r)] ? '<span class="chip ' + (inv.loans[assetKey(type, r)].overdue ? 'bad' : 'accent') + '">' + esc(inv.loans[assetKey(type, r)].id) +
+        ' 還 ' + esc(inv.loans[assetKey(type, r)].due) + (inv.loans[assetKey(type, r)].overdue ? ' 逾期' : '') + '</span>' : '') + '</div></a></li>';
   }).join('');
 
   $('#lResult').innerHTML = '<div class="row spread meta" style="margin:4px 2px 8px"><span>共 ' + list.length + ' 筆' +
