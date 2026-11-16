@@ -7,6 +7,7 @@
  * 異常案件：#/cases（處理中／已結案，Super 結案）；資產頁與批次頁「登記異常」。
  * 借用 A：公開清單選件數 → #/apply 申請 → 借用單（可列印）；#/loan 以單號＋手機查詢重印。
  * 借用管理：#/loans（申請中／借出中／已結束）、#/loans/<單號>（借出核對、照片、簽核單）、#/loans/<單號>/print。
+ * 資產自主盤點資料表：#/selfcheck 或 #/selfcheck/<批次>，固定資產每件一頁，列印或存 PDF。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -166,6 +167,7 @@ const routes = [
   { re: /^#\/cases$/, view: viewCases, perm: 'case.open' },
   { re: /^#\/loans$/, view: viewLoans, perm: 'loan.manage' },
   { re: /^#\/managed$/, view: viewManaged, perm: 'asset.view' },
+  { re: /^#\/selfcheck(?:\/([^/]+))?$/, view: viewSelfCheck, perm: 'asset.view' },
   { re: /^#\/fixed\/([^/]+)$/, view: viewFixedRecords, perm: 'fixed.record' },
   { re: /^#\/loans\/([^/]+)$/, view: viewLoan, perm: 'loan.manage' },
   { re: /^#\/loans\/([^/]+)\/print$/, view: viewLoanPrint, perm: 'loan.manage' },
@@ -214,6 +216,7 @@ function viewHome(view) {
       tile('#/inventory', '盤點', '批次、進度、未盤清單', true) +
       tile('#/loans', '借用', '申請、借出、歸還', true) +
       tile('#/managed', '我經管的', '借出、在庫、點數差異', true) +
+      tile('#/selfcheck', '盤點資料表', '資產自主盤點，每件一頁列印', true) +
       tile('#/import', '匯入', '學校清冊 Excel', true) +
       tile('#/public', '可借設備', '公開頁（訪客看到的）', true) +
       tile('#/cases', '異常案件', '登記、Super 結案', true) +
@@ -1385,7 +1388,8 @@ async function viewBatch(view, params) {
   view.innerHTML = '<h1>' + esc(b['名稱']) + '</h1><p class="meta muted">' + esc(ASSET_TYPES[type].label) + '｜範圍 ' + esc(b['範圍說明']) + '｜' + fmtDate(b['開始日']) +
     (b['截止日'] ? ' ～ ' + fmtDate(b['截止日']) : '') + '｜' + esc(b['批次編號']) + '｜' + esc(b['狀態']) + '</p>' +
     '<div class="card"><div class="row spread"><strong>進度 ' + st.done + '／' + st.total + '（' + pct + '%）</strong>' +
-    '<span class="row">' + (active ? '<a class="btn primary" href="#/scan">掃描 QR 盤點</a><button type="button" id="bClose">結束批次</button>' : '') + '</span></div>' +
+    '<span class="row">' + (active ? '<a class="btn primary" href="#/scan">掃描 QR 盤點</a><button type="button" id="bClose">結束批次</button>' : '') +
+    (type === 'FIXED' ? '<a class="btn" href="#/selfcheck/' + encodeURIComponent(id) + '">盤點資料表</a>' : '') + '</span></div>' +
     '<div class="progress"><div style="width:' + pct + '%"></div></div>' +
     '<div class="row chips" style="margin-top:8px"><span class="chip warn">未盤 ' + st.missing.length + '</span><span class="chip">自行盤點 ' + st.self + '</span>' +
     '<span class="chip bad">被退回 ' + st.rejected + '</span><span class="chip warn">結果異常 ' + st.abnormal + '</span>' +
@@ -2438,3 +2442,113 @@ function more(n) {
   if (state.token) await loadMe();
   render();
 })();
+
+// ---------- 資產自主盤點資料表（M3-01） ----------
+
+/** 讀原圖並縮成長邊 maxSide 的 JPEG（列印用；避免幾百張原圖占滿記憶體）。 */
+async function photoScaled(id, maxSide) {
+  const r = await api('photo.get', { id });
+  const img = new Image();
+  img.src = 'data:image/jpeg;base64,' + r.base64;
+  await img.decode();
+  const k = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.naturalWidth * k);
+  c.height = Math.round(img.naturalHeight * k);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.85);
+}
+
+async function viewSelfCheck(view, params) {
+  view.innerHTML = '<h1>資產自主盤點資料表</h1><p class="muted">載入中…</p>';
+  // 「-」＝使用者選了不指定批次（和沒帶參數的預設不同）
+  const batchId = params[0] && params[0] !== '-' ? params[0] : '';
+  let data;
+  try { data = await api('selfcheck.data', { batchId }); } catch (e) {
+    view.innerHTML = '<h1>資產自主盤點資料表</h1><div class="card"><p>' + esc(e.message) + '</p></div><a class="btn" href="#/">回首頁</a>';
+    return;
+  }
+  // 沒指定批次時預設最新的進行中固定資產批次
+  if (!params[0]) {
+    const act = data.batches.find((b) => isBatchActive(b));
+    if (act) { location.replace('#/selfcheck/' + encodeURIComponent(act['批次編號'])); return; }
+  }
+  const uniq = (arr) => arr.filter((v, i) => v && arr.indexOf(v) === i).sort();
+  const custodians = uniq(data.rows.map((r) => r['保管人代號']));
+  const nameOf = {};
+  data.rows.forEach((r) => { nameOf[r['保管人代號']] = r['保管人姓名']; });
+  const places = uniq(data.rows.map((r) => r['位置']));
+  const opt = (v, label, cur) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(label) + '</option>';
+  const f = { c: storeGet('asset.scCustodian') || '', p: storeGet('asset.scPlace') || '', s: storeGet('asset.scState') || '' };
+  if (custodians.indexOf(f.c) === -1) f.c = '';
+  if (places.indexOf(f.p) === -1) f.p = '';
+
+  view.innerHTML = '<div class="no-print"><h1>資產自主盤點資料表</h1>' +
+    '<div class="card"><div class="form">' +
+    '<label>盤點批次<select id="scBatch">' + opt('', '不指定批次（照片用前次盤點與建檔）', batchId) +
+    data.batches.map((b) => opt(b['批次編號'], b['名稱'] + '（' + b['批次編號'] + '，' + b['狀態'] + '）', batchId)).join('') + '</select></label>' +
+    '<label>保管人<select id="scCust">' + opt('', '全部', f.c) + custodians.map((c) => opt(c, c + ' ' + (nameOf[c] || ''), f.c)).join('') + '</select></label>' +
+    '<label>放置位置<select id="scPlace">' + opt('', '全部', f.p) + places.map((p) => opt(p, p, f.p)).join('') + '</select></label>' +
+    '<label>盤點狀態<select id="scState">' + opt('', '全部', f.s) + SC_STATES.map((x) => opt(x, x, f.s)).join('') + '</select></label>' +
+    '</div><p class="meta muted">' + (data.batch ? '範圍：' + esc(data.batch['範圍說明']) + '。' : '') +
+    '照片依序用本次盤點、最近一次盤點、建檔照片遞補，照片下標示拍攝日與來源；遞補不算已盤。盤點日期只填本次已盤的，其餘請手寫。分機請手寫。</p>' +
+    '<div class="row spread"><span id="scCount"></span><span class="row"><button type="button" class="primary" id="scPrint">列印／存 PDF</button>' +
+    '<a class="btn" href="' + (data.batch ? '#/inventory/' + encodeURIComponent(batchId) : '#/') + '">返回</a></span></div>' +
+    '<div class="meta muted" id="scProgress"></div></div></div><div id="scPages"></div>';
+
+  $('#scBatch').onchange = () => { location.hash = '#/selfcheck/' + encodeURIComponent($('#scBatch').value || '-'); };
+  let run = 0;
+  const draw = () => {
+    f.c = $('#scCust').value; f.p = $('#scPlace').value; f.s = $('#scState').value;
+    storeSet('asset.scCustodian', f.c); storeSet('asset.scPlace', f.p); storeSet('asset.scState', f.s);
+    const rows = data.rows.filter((r) => (!f.c || r['保管人代號'] === f.c) && (!f.p || r['位置'] === f.p) && (!f.s || r.entry.state === f.s));
+    const counts = {};
+    rows.forEach((r) => { counts[r.entry.state] = (counts[r.entry.state] || 0) + 1; });
+    $('#scCount').innerHTML = '<strong>' + rows.length + ' 頁</strong> <span class="muted">' +
+      SC_STATES.filter((x) => counts[x]).map((x) => x + ' ' + counts[x]).join('、') + '</span>';
+    $('#scPages').innerHTML = rows.map(selfCheckPage).join('') || '<div class="card no-print"><p class="muted">沒有符合的資產。</p></div>';
+    loadSelfCheckPhotos(++run, () => run);
+  };
+  ['#scCust', '#scPlace', '#scState'].forEach((s) => { $(s).onchange = draw; });
+  $('#scPrint').onclick = () => window.print();
+  draw();
+}
+
+function selfCheckPage(r) {
+  const e = r.entry;
+  const ph = (p, big) => '<figure class="sc-ph' + (big ? ' big' : '') + '">' +
+    (p.id ? '<img data-sc="' + esc(p.id) + '" alt="' + esc(p.slot) + '">' : '<div class="sc-none">（沒有照片）</div>') +
+    '<figcaption>' + esc(p.slot) + (p.label ? '　' + esc(p.label) : '') + '</figcaption></figure>';
+  // 欄寬與合併照學校範本：第 1、3 列左右各半（右格跨兩欄）
+  return '<section class="sc-page"><div class="sc-head"><h2 class="sc-title">資產自主盤點資料表</h2>' +
+    (e.pending ? '<span class="sc-pending">' + esc(e.pending) + '</span>' : '') + '</div>' +
+    '<table class="sc-table"><colgroup><col style="width:50%"><col style="width:28%"><col style="width:22%"></colgroup>' +
+    '<tr><td>設備名稱：' + esc(r['名稱']) + '</td><td colspan="2">數量：1</td></tr>' +
+    '<tr><td>設備編號：' + esc(r['資產編號']) + '</td><td>保管人：' + esc(r['保管人姓名']) + '</td><td>分機：</td></tr>' +
+    '<tr><td>放置位置：' + esc(r['位置']) + '</td><td colspan="2">盤點日期：' + esc(e.date || '　　/　　/　　') + '</td></tr>' +
+    '<tr><td colspan="3">佐證照片：(必須能辨識設備資產編號、廠牌型號及全貌)</td></tr>' +
+    '<tr><td colspan="3" class="sc-photos">' + ph(e.photos[0], true) + '<div class="sc-two">' + ph(e.photos[1]) + ph(e.photos[2]) + '</div></td></tr>' +
+    '</table></section>';
+}
+
+/** 逐張讀照片（同時 3 張）；篩選改變後舊的工作停下。 */
+async function loadSelfCheckPhotos(myRun, currentRun) {
+  const imgs = Array.from(document.querySelectorAll('img[data-sc]'));
+  const total = imgs.length;
+  let done = 0, failed = 0, next = 0;
+  const show = () => {
+    const el = $('#scProgress');
+    if (el && myRun === currentRun()) el.textContent = total ? '照片 ' + done + '／' + total + (failed ? '（' + failed + ' 張讀取失敗）' : '') + (done < total ? '，讀完再列印' : '，已就緒') : '';
+  };
+  show();
+  const worker = async () => {
+    while (next < imgs.length && myRun === currentRun()) {
+      const img = imgs[next++];
+      try { img.src = await photoScaled(img.dataset.sc, 1200); } catch (e) { failed++; img.replaceWith(Object.assign(document.createElement('div'), { className: 'sc-none', textContent: '（照片讀取失敗）' })); }
+      done++;
+      show();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+}
+
