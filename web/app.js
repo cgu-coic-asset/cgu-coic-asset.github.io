@@ -5,6 +5,7 @@
  * 公開頁 #/public（訪客首頁）：開放借用的系所物品清單（public.list），只有公開欄位與代表照片縮圖。
  * 盤點：#/inventory 批次清單與建立、#/inventory/<批次> 進度與未盤清單；資產頁「盤點」對話框；User 在「我名下的財產」自行盤點。
  * 異常案件：#/cases（處理中／已結案，Super 結案）；資產頁與批次頁「登記異常」。
+ * 借用 A：公開清單選件數 → #/apply 申請 → 借用單（可列印）；#/loan 以單號＋手機查詢重印。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -157,6 +158,8 @@ const routes = [
   { re: /^#\/asset\/([FCI])\/(.+)$/, view: viewAsset },
   { re: /^#\/scan$/, view: viewScan },
   { re: /^#\/public$/, view: viewPublicList },
+  { re: /^#\/apply$/, view: viewApply },
+  { re: /^#\/loan$/, view: viewLoanLookup },
   { re: /^#\/inventory$/, view: viewInventory, perm: 'inventory.record' },
   { re: /^#\/inventory\/([^/]+)$/, view: viewBatch, perm: 'inventory.record' },
   { re: /^#\/cases$/, view: viewCases, perm: 'case.open' },
@@ -246,7 +249,8 @@ async function viewPublicList(view, params, note) {
   }
   const groups = groupPublicItems(data.items);
   view.innerHTML = '<h1>' + esc(data.unit ? data.unit + ' ' : '') + '可借設備</h1>' +
-    '<p class="meta muted">' + esc(note || '') + (note ? ' ' : '') + '借用請洽系辦；線上申請建置中。</p>' +
+    '<p class="meta muted">' + esc(note || '') + (note ? ' ' : '') + '在想借的設備填件數，按下方「申請借用」填表，送出後印出借用單到系辦借出。' +
+    '已申請過的請到 <a href="#/loan">查詢借用單</a>。</p>' +
     '<div class="row" style="margin-bottom:12px"><input id="pubQ" class="grow1" type="search" placeholder="搜尋名稱、規格、編號…">' +
     '<a class="btn" href="#/scan">掃描 QR</a></div><div id="pubList"></div>';
   const draw = () => {
@@ -261,14 +265,132 @@ async function viewPublicList(view, params, note) {
       return '<div class="card pub-item">' + (g.photoId ? '<img class="pub-thumb" data-photo="' + esc(g.photoId) + '" alt="">' : '<div class="pub-thumb"></div>') +
         '<div class="pub-body"><strong>' + esc(g.name) + '</strong>' + (g.spec ? '<div class="meta">' + esc(g.spec) + '</div>' : '') +
         '<div class="row chips" style="margin-top:4px">' + chip + (g.out ? '<span class="chip accent">借出中 ' + g.out + '</span>' : '') + '</div>' +
+        (g.lendable ? '<div class="row" style="margin-top:6px"><label class="radio" style="margin:0">借 <input type="number" class="qty" min="0" max="' + g.lendable +
+          '" value="' + (cart[groupKey(g)] || 0) + '" data-g="' + esc(groupKey(g)) + '" inputmode="numeric"> 件</label></div>' : '') +
         '<details><summary class="small">編號與狀態</summary><div class="codes">' + g.items.map((it) =>
           '<a class="chip' + (it.loan === '可借用' ? ' ok' : it.loan === '借出中' ? ' accent' : '') + '" href="#/asset/' + esc(it.qr[0]) + '/' +
           encodeURIComponent(it.key) + '">' + esc(it.code || '（未編號）') + ' ' + esc(it.loan) + '</a>').join('') + '</div></details></div></div>';
     }).join('') || '<div class="card"><p class="muted" style="margin:0">' + (groups.length ? '沒有符合的設備。' : '目前沒有開放借用的設備。') + '</p></div>';
     loadThumbs($('#pubList'));
+    $('#pubList').querySelectorAll('input.qty').forEach((el) => {
+      el.oninput = () => {
+        const max = Number(el.max);
+        let n = Math.max(0, Math.min(max, parseInt(el.value, 10) || 0));
+        if (String(n) !== el.value && el.value !== '') el.value = n;
+        if (n) cart[el.dataset.g] = n; else delete cart[el.dataset.g];
+        drawCart();
+      };
+    });
   };
+  const cart = state.cart || (state.cart = {});
+  const drawCart = () => {
+    const n = Object.values(cart).reduce((a, b) => a + b, 0);
+    $('#cartBar').hidden = !n;
+    $('#cartN').textContent = n;
+  };
+  view.insertAdjacentHTML('beforeend', '<div class="batchbar" id="cartBar" hidden><span class="grow" style="align-items:center">已選 <strong id="cartN" style="margin:0 4px">0</strong> 件</span>' +
+    '<button type="button" class="primary" id="cartGo">申請借用</button></div>');
+  $('#cartGo').onclick = () => {
+    // 每組取編號最前面的 N 件可借的
+    state.applyItems = [];
+    groups.forEach((g) => {
+      const n = cart[groupKey(g)] || 0;
+      g.items.filter((it) => it.loan === '可借用').slice(0, n).forEach((it) => state.applyItems.push({ id: it.key, code: it.code, name: g.name, spec: g.spec }));
+    });
+    if (!state.applyItems.length) { toast('請先選要借的件數', true); return; }
+    location.hash = '#/apply';
+  };
+  // 清單重新載入後，已不能借的件數要縮回
+  groups.forEach((g) => { const k = groupKey(g); if (cart[k] > g.lendable) { if (g.lendable) cart[k] = g.lendable; else delete cart[k]; } });
+  Object.keys(cart).forEach((k) => { if (!groups.some((g) => groupKey(g) === k)) delete cart[k]; });
   $('#pubQ').oninput = draw;
   draw();
+  drawCart();
+}
+
+function groupKey(g) {
+  return g.name + '\n' + g.spec;
+}
+
+// ----- 借用申請（公開）-----
+
+async function viewApply(view) {
+  const items = state.applyItems || [];
+  if (!items.length) {
+    view.innerHTML = '<h1>申請借用</h1><div class="card"><p>還沒有選物品。</p></div><a class="btn primary" href="#/public">到可借設備選物品</a>';
+    return;
+  }
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const field = (f) => {
+    const id = 'ap_' + f.name;
+    const type = f.name.indexOf('日') !== -1 ? 'date' : f.name === 'Email' ? 'email' : f.name === '手機' ? 'tel' : 'text';
+    const extra = type === 'date' ? ' min="' + today + '"' : '';
+    const input = f.name === '用途' || f.name === '備註'
+      ? '<textarea id="' + esc(id) + '" rows="2" maxlength="' + f.max + '"></textarea>'
+      : '<input id="' + esc(id) + '" type="' + type + '" maxlength="' + f.max + '"' + extra + (f.name === 'Email' ? ' autocomplete="email"' : f.name === '借用人姓名' ? ' autocomplete="name"' : '') + '>';
+    return '<label for="' + esc(id) + '">' + esc(f.name) + (f.required ? '' : '（選填）') + '</label>' + input;
+  };
+  view.innerHTML = '<h1>申請借用</h1><div class="card"><h2>借用物品（' + items.length + ' 件）</h2><ul class="list">' +
+    items.map((it) => '<li><span class="code">' + esc(it.code || '未編號') + '</span> ' + esc(it.name) + (it.spec ? '<div class="meta">' + esc(it.spec) + '</div>' : '') + '</li>').join('') +
+    '</ul><a class="small" href="#/public">修改選擇</a></div>' +
+    '<form class="card" id="apForm">' + LOAN_APPLICANT_FIELDS.map(field).join('') +
+    '<p class="meta muted">送出後會產生借用單號，請印出（或存 PDF）帶到系辦，借出時簽名。資料只用於本次借用管理。</p>' +
+    '<div id="apErr" class="meta" style="color:var(--bad)"></div>' +
+    '<div class="row" style="justify-content:flex-end"><button class="primary" type="submit" id="apGo">送出申請</button></div></form>';
+  $('#ap_預計借出日').value = today;
+  $('#apForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const payload = { items: items.map((it) => it.id) };
+    LOAN_APPLICANT_FIELDS.forEach((f) => { payload[f.name] = $('#ap_' + f.name).value; });
+    const check = validateLoanRequest(payload, today);
+    if (!check.ok) { $('#apErr').innerHTML = check.errors.map(esc).join('<br>'); return; }
+    $('#apErr').textContent = '';
+    $('#apGo').disabled = true;
+    try {
+      const data = await api('loan.apply', payload);
+      state.applyItems = [];
+      state.cart = {};
+      renderLoanSlip(view, data, true);
+    } catch (e) {
+      $('#apGo').disabled = false;
+      $('#apErr').innerHTML = esc(e.message);
+    }
+  };
+}
+
+function viewLoanLookup(view) {
+  view.innerHTML = '<h1>查詢借用單</h1><form class="card" id="lkForm"><label for="lkId">借用單號（例 L20261116-01）</label><input id="lkId" autocapitalize="characters">' +
+    '<label for="lkPhone">申請時填的手機</label><input id="lkPhone" type="tel">' +
+    '<div class="row" style="margin-top:12px;justify-content:flex-end"><button class="primary" type="submit">查詢</button></div></form>' +
+    '<a class="btn" href="#/public">回可借設備</a>';
+  $('#lkForm').onsubmit = async (ev) => {
+    ev.preventDefault();
+    try {
+      renderLoanSlip(view, await api('loan.lookup', { id: $('#lkId').value, phone: $('#lkPhone').value }), false);
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+}
+
+/** 借用單（可列印）：表頭、借用人、物品、借出與歸還簽名欄。 */
+function renderLoanSlip(view, data, fresh) {
+  const l = data.loan;
+  const kv = (k) => '<tr><th>' + esc(k) + '</th><td>' + esc(l[k] || '') + '</td></tr>';
+  view.innerHTML = (fresh ? '<div class="card no-print"><strong>已送出申請。</strong><div class="meta">借用單號 <strong>' + esc(l['借用單號']) +
+      '</strong>。請按「列印借用單」印出或存成 PDF，帶到系辦借出並簽名。之後可用單號與手機在「查詢借用單」再印一次。</div></div>' : '') +
+    '<div class="slip"><h1 class="center">' + esc(data.unit || '') + ' 設備借用單</h1>' +
+    '<div class="row spread meta"><span>借用單號：<strong>' + esc(l['借用單號']) + '</strong></span><span>狀態：' + esc(l['狀態']) + '</span><span>申請時間：' + esc(l['申請時間']) + '</span></div>' +
+    '<table class="kv slip-table">' + ['借用人姓名', '學號或職號', '系所單位', '手機', 'Email', '指導教授', '用途', '使用地點'].map(kv).join('') +
+    '<tr><th>預計借用期間</th><td>' + esc(l['預計借出日']) + ' ～ ' + esc(l['預計歸還日']) + '</td></tr>' + (l['備註'] ? kv('備註') : '') + '</table>' +
+    '<table class="grid-table"><thead><tr><th>#</th><th>系所編號</th><th>名稱／規格</th><th>借出核對</th><th>歸還日期</th><th>歸還經手</th></tr></thead><tbody>' +
+    l.details.map((d, i) => '<tr><td>' + (i + 1) + '</td><td><strong>' + esc(d['系所編號'] || '') + '</strong></td><td>' + esc(d['名稱']) +
+      (d['規格'] ? '<div class="meta">' + esc(d['規格']) + '</div>' : '') + '</td><td></td><td>' + esc((d['歸還時間'] || '').slice(0, 10)) + '</td><td></td></tr>').join('') +
+    '</tbody></table>' +
+    '<p class="meta">借用人同意妥善使用並於預計歸還日前歸還；遺失或損壞依規定賠償。</p>' +
+    '<div class="signs"><div>借用人簽名<span></span></div><div>借出經手人<span></span></div><div>借出日期<span></span></div><div>全部歸還確認<span></span></div></div></div>' +
+    '<div class="row no-print" style="margin-top:12px"><button type="button" class="primary" id="slipPrint">列印借用單</button><a class="btn" href="#/public">回可借設備</a></div>';
+  $('#slipPrint').onclick = () => window.print();
 }
 
 /** 依序載入縮圖（一次一張，避免同時打太多請求）。 */

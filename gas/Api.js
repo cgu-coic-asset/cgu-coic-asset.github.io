@@ -33,6 +33,9 @@ function actions_() {
     'case.list': { perm: 'case.open', handler: caseList_ },
     'case.open': { perm: 'case.open', write: true, handler: caseOpen_ },
     'case.close': { perm: 'case.close', write: true, handler: caseClose_ },
+    // 借用 A：公開申請、以單號＋手機查詢
+    'loan.apply': { perm: 'loan.apply', write: true, handler: loanApply_ },
+    'loan.lookup': { perm: 'loan.apply', handler: loanLookup_ },
     'item.create': { perm: 'asset.edit', write: true, handler: itemCreate_ },
     'item.fromCustody': { perm: 'asset.edit', write: true, handler: itemFromCustody_ },
     'item.fromFixed': { perm: 'asset.edit', write: true, handler: itemFromFixed_ },

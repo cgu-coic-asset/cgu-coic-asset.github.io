@@ -153,3 +153,20 @@ table.kv tr + tr th, table.kv tr + tr td { border-top: 1px solid var(--line); }
 .slot-img img { width: 100%; height: 100%; object-fit: cover; }
 .slot-msg { font-size: .75rem; text-align: center; word-break: break-all; }
 button.small { min-height: 32px; padding: 4px 10px; font-size: .85rem; }
+input.qty { width: 5em; display: inline-block; min-height: 32px; padding: 4px 8px; }
+.slip { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.slip h1 { margin-bottom: 8px; }
+.slip-table { margin: 10px 0; }
+.grid-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: .9rem; }
+.grid-table th, .grid-table td { border: 1px solid var(--line); padding: 6px; text-align: left; vertical-align: top; }
+.grid-table td:nth-child(4), .grid-table td:nth-child(5), .grid-table td:nth-child(6) { min-width: 4.5em; }
+.signs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px 24px; margin-top: 18px; }
+.signs div { font-size: .85rem; color: var(--muted); }
+.signs span { display: block; border-bottom: 1px solid var(--text); height: 32px; }
+@media print {
+  :root { --card: #fff; --text: #000; --muted: #333; --line: #888; --bg: #fff; --chip: #eee; }
+  .topbar, .no-print, .toast, .batchbar { display: none !important; }
+  .view { max-width: none; padding: 0; }
+  .slip { border: 0; padding: 0; }
+  body { font-size: 12pt; }
+}

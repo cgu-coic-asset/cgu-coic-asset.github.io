@@ -34,10 +34,12 @@ function publicList_() {
     if (r['類型'] !== 'ITEM') return;
     (photosByKey[r['資產鍵']] = photosByKey[r['資產鍵']] || []).push(r);
   });
+  const reserved = reservedItems_();
   const items = readRows_(itemSheet_()).filter(function (r) {
     return r['開放借用'] === '是' && assetStatus(r) !== '報廢';
   }).map(function (r) {
     const a = publicAsset('ITEM', r);
+    if (a.lendable && reserved[r['物品ID']]) { a.lendable = false; a.loan = '已有人申請'; }
     const photo = representativePhoto(photosByKey[photoAssetKey('ITEM', r)]);
     a.photoId = photo ? photo['照片編號'] : '';
     return a;
