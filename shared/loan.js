@@ -184,8 +184,36 @@ function loanMailContent(loan, details, siteUrl) {
   return { subject: '[借用申請] ' + loan['借用單號'] + ' ' + details.length + ' 件', body: lines.join('\n') };
 }
 
+var CHECKOUT_MIN_PHOTOS = 2;
+
+/**
+ * 借出前檢查。lines：[{ detailId, itemId（實際借出的物品ID；空白＝這件不借）, photoCount, verified }]；
+ * details：這張單的申請明細。回傳錯誤訊息陣列（空＝可以借出）。
+ */
+function checkoutErrors(details, lines) {
+  const errors = [];
+  const byId = {};
+  (lines || []).forEach(function (l) { byId[l.detailId] = l; });
+  let lending = 0;
+  const used = {};
+  (details || []).forEach(function (d) {
+    const l = byId[d['明細編號']];
+    const label = d['系所內部編號'] || d['資產鍵'];
+    if (!l) { errors.push(label + '：沒有處理'); return; }
+    if (!l.itemId) return;
+    lending++;
+    if (used[l.itemId]) errors.push(label + '：同一件物品重複');
+    used[l.itemId] = true;
+    if (!l.verified) errors.push(label + '：尚未核對實物（掃 QR 或勾選）');
+    if ((l.photoCount || 0) < CHECKOUT_MIN_PHOTOS) errors.push(label + '：借出照片至少 ' + CHECKOUT_MIN_PHOTOS + ' 張');
+  });
+  if (!lending) errors.push('至少要借出一件');
+  return errors;
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
+    CHECKOUT_MIN_PHOTOS, checkoutErrors,
     loanNotifyRecipients, loanMailContent,
     LOAN_LIMITS, botCheck, rateCheck, isApplicationExpired, applicationAgeDays,
     LOAN_APPLIED, LOAN_OUT, LOAN_RETURNED, LOAN_VOID, LOAN_OPEN_STATES, DETAIL_APPLIED, DETAIL_OUT, DETAIL_RETURNED, DETAIL_VOID,

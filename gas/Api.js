@@ -36,6 +36,12 @@ function actions_() {
     // 借用 A：公開申請、以單號＋手機查詢
     'loan.apply': { perm: 'loan.apply', write: true, handler: loanApply_ },
     'loan.lookup': { perm: 'loan.apply', handler: loanLookup_ },
+    'loan.list': { perm: 'loan.manage', handler: loanList_ },
+    'loan.get': { perm: 'loan.manage', handler: loanGet_ },
+    'loan.photo': { perm: 'loan.manage', write: true, handler: loanPhoto_ },
+    'loan.checkout': { perm: 'loan.manage', write: true, handler: loanCheckout_ },
+    'loan.uploadScan': { perm: 'loan.manage', write: true, handler: loanUploadScan_ },
+    'loan.scan': { perm: 'loan.manage', handler: loanScanGet_ },
     'item.create': { perm: 'asset.edit', write: true, handler: itemCreate_ },
     'item.fromCustody': { perm: 'asset.edit', write: true, handler: itemFromCustody_ },
     'item.fromFixed': { perm: 'asset.edit', write: true, handler: itemFromFixed_ },

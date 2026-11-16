@@ -175,3 +175,182 @@ function loanLookup_(payload) {
   });
   return { loan: loanForApplicant(loan, details), unit: setting_('單位名稱') };
 }
+
+// ---------- 管理：清單、單張、借出（M2-04）----------
+
+/** 借用單清單（新到舊），每張附件數與物品編號。 */
+function loanList_() {
+  const details = readRows_(loanDetailSheet_());
+  const byLoan = {};
+  details.forEach(function (d) { (byLoan[d['借用單號']] = byLoan[d['借用單號']] || []).push(d); });
+  const loans = readRows_(loanSheet_()).map(function (l) {
+    const o = publicRow_(l);
+    const ds = byLoan[l['借用單號']] || [];
+    o.items = ds.filter(function (d) { return d['狀態'] !== DETAIL_VOID || l['狀態'] === LOAN_VOID; })
+      .map(function (d) { return { code: d['系所內部編號'] || d['資產鍵'], name: d['名稱'], status: d['狀態'] }; });
+    return o;
+  }).reverse();
+  return { loans: loans, unit: setting_('單位名稱') };
+}
+
+function findLoan_(id) {
+  const loan = readRows_(loanSheet_()).find(function (r) { return r['借用單號'] === String(id || '').trim().toUpperCase(); });
+  if (!loan) throw new AppError('NOT_FOUND', '找不到借用單 ' + id);
+  return loan;
+}
+
+/**
+ * 單張借用單（管理用）：借用單、明細（附物品目前資料與借出照片數）、可換件的候選（同名稱規格、可借、未被占用）、簽核單檔案。
+ */
+function loanGet_(payload) {
+  const loan = findLoan_(payload.id);
+  const id = loan['借用單號'];
+  const items = readRows_(itemSheet_());
+  const byId = {};
+  items.forEach(function (r) { byId[r['物品ID']] = r; });
+  const reserved = reservedItems_();
+  const photos = readRows_(photoSheet_()).filter(function (p) { return p['狀態'] === PHOTO_ACTIVE && String(p['關聯編號']).indexOf(id + '-') === 0; });
+  const details = readRows_(loanDetailSheet_()).filter(function (d) { return d['借用單號'] === id; }).map(function (d) {
+    const it = byId[d['資產鍵']] || {};
+    const o = publicRow_(d);
+    o.item = { 物品ID: it['物品ID'] || d['資產鍵'], 系所編號: it['系所編號'] || '', 名稱: it['名稱'] || d['名稱'], 規格: it['規格'] || '',
+      狀態: assetStatus(it), 開放借用: it['開放借用'] || '', 資產編號: it['資產編號'] || '' };
+    o.photos = photos.filter(function (p) { return p['關聯編號'] === d['明細編號']; }).map(function (p) {
+      return { id: p['照片編號'], purpose: p['用途'], name: p['檔名'], key: p['資產鍵'] };
+    });
+    if (loan['狀態'] === LOAN_APPLIED) {
+      o.candidates = items.filter(function (r) {
+        return r['物品ID'] !== d['資產鍵'] && r['名稱'] === (it['名稱'] || d['名稱']) && (r['規格'] || '') === (it['規格'] || '') &&
+          isLendable(r) && !reserved[r['物品ID']];
+      }).map(function (r) { return { 物品ID: r['物品ID'], 系所編號: r['系所編號'] || '' }; })
+        .sort(function (a, b) { return compareItemCodes(a['系所編號'], b['系所編號']); });
+    }
+    return o;
+  });
+  return { loan: publicRow_(loan), details: details, unit: setting_('單位名稱') };
+}
+
+/** 借出、歸還照片。payload：{ loanId, detailId, itemId, purpose（借出／歸還）, base64, takenAt, originalName }。 */
+function loanPhoto_(payload, actor) {
+  if (['借出', '歸還'].indexOf(payload.purpose) === -1) throw new AppError('BAD_REQUEST', '照片用途不正確');
+  const loan = findLoan_(payload.loanId);
+  const detail = readRows_(loanDetailSheet_()).find(function (d) { return d['明細編號'] === payload.detailId && d['借用單號'] === loan['借用單號']; });
+  if (!detail) throw new AppError('NOT_FOUND', '找不到這筆明細');
+  const want = payload.purpose === '借出' ? LOAN_APPLIED : LOAN_OUT;
+  if (loan['狀態'] !== want) throw new AppError('BAD_REQUEST', '借用單狀態是' + loan['狀態'] + '，不能拍' + payload.purpose + '照片');
+  const itemId = String(payload.itemId || detail['資產鍵']);
+  return savePhoto_({ type: 'ITEM', key: itemId, purpose: payload.purpose, relatedId: detail['明細編號'],
+    base64: payload.base64, takenAt: payload.takenAt, originalName: payload.originalName }, actor);
+}
+
+/**
+ * 借出。payload：{ id, version, lines: [{ detailId, itemId（空白＝不借）, verified, photoIds }], note }。
+ * 物品狀態改借出；連結固定資產者固定資產須在庫，一起改借出。換件時記原申請物品。
+ */
+function loanCheckout_(payload, actor) {
+  const sh = loanSheet_();
+  const loan = findLoan_(payload.id);
+  const id = loan['借用單號'];
+  if (loan['狀態'] !== LOAN_APPLIED) throw new AppError('BAD_REQUEST', '這張單是' + loan['狀態'] + '，不能借出');
+  const conflict = checkVersion(loan, payload.version);
+  if (conflict) throw new AppError('VERSION_CONFLICT', undefined, conflict);
+
+  const dsh = loanDetailSheet_();
+  const allDetails = readRows_(dsh);
+  const details = allDetails.filter(function (d) { return d['借用單號'] === id && d['狀態'] === DETAIL_APPLIED; });
+  const photos = readRows_(photoSheet_());
+  const lines = (payload.lines || []).map(function (l) {
+    const ids = (l.photoIds || []).map(String);
+    const ok = photos.filter(function (p) {
+      return ids.indexOf(p['照片編號']) !== -1 && p['類型'] === 'ITEM' && p['資產鍵'] === l.itemId && p['用途'] === '借出' &&
+        p['關聯編號'] === l.detailId && p['狀態'] === PHOTO_ACTIVE;
+    });
+    return { detailId: l.detailId, itemId: String(l.itemId || ''), verified: !!l.verified, photoCount: ok.length, photoIds: ok.map(function (p) { return p['照片編號']; }) };
+  });
+  const errs = checkoutErrors(details, lines);
+  if (errs.length) throw new AppError('BAD_REQUEST', errs.join('；'), { errors: errs });
+
+  const ish = itemSheet_();
+  const items = readRows_(ish);
+  const reserved = reservedItems_();
+  const nowText = now_();
+  const logs = [];
+  const fixedChanges = [];
+  const byLine = {};
+  lines.forEach(function (l) { byLine[l.detailId] = l; });
+
+  // 先全部檢查，再寫入
+  const plan = details.map(function (d) {
+    const l = byLine[d['明細編號']];
+    if (!l.itemId) return { d: d, l: l };
+    const it = items.find(function (r) { return r['物品ID'] === l.itemId; });
+    const label = (it && it['系所編號']) || l.itemId;
+    if (!it || !isLendable(it)) throw new AppError('BAD_REQUEST', label + ' 目前不能借（狀態或開放借用已變更）');
+    if (reserved[l.itemId] && reserved[l.itemId] !== id) throw new AppError('BAD_REQUEST', label + ' 已被借用單 ' + reserved[l.itemId] + ' 占用');
+    let fixed = null;
+    if (it['資產編號']) {
+      fixed = findAssetRows_('FIXED', it['資產編號'])[0];
+      if (assetStatus(fixed) !== '在庫') throw new AppError('BAD_REQUEST', label + ' 連結的固定資產 ' + it['資產編號'] + ' 目前' + assetStatus(fixed) + '，不能借出');
+    }
+    return { d: d, l: l, it: it, fixed: fixed };
+  });
+
+  plan.forEach(function (p) {
+    const d = p.d;
+    if (!p.l.itemId) {
+      Object.assign(d, applyChanges(d, { '狀態': DETAIL_VOID, '備註': '借出時取消' }, ['狀態', '備註'], actor.email, nowText).row);
+      return;
+    }
+    const swap = p.l.itemId !== d['資產鍵'];
+    const changes = { '狀態': DETAIL_OUT, '借出時間': nowText, '借出經手人': actor.email, '借出照片': p.l.photoIds.join(',') };
+    if (swap) Object.assign(changes, { '申請物品': d['資產鍵'], '資產鍵': p.l.itemId, '名稱': p.it['名稱'], '系所內部編號': p.it['系所編號'] || '' });
+    Object.assign(d, applyChanges(d, changes, Object.keys(changes), actor.email, nowText).row);
+    const ir = applyChanges(p.it, { '狀態': '借出' }, ['狀態'], actor.email, nowText);
+    Object.assign(p.it, ir.row);
+    logs.push({ action: '借出', objectType: '系所物品', key: p.l.itemId, before: ir.before, after: Object.assign({ 借用單: id }, ir.after, swap ? { 換件自: changes['申請物品'] } : {}) });
+    if (p.fixed) fixedChanges.push(p);
+  });
+  writeAllRows_(dsh, allDetails, []);
+  writeAllRows_(ish, items, []);
+  fixedChanges.forEach(function (p) {
+    const fr = applyChanges(p.fixed, { '狀態': '借出' }, ['狀態'], actor.email, nowText);
+    writeRow_(targetSheet_(importTarget_('FIXED')), p.fixed._row, fr.row);
+    logs.push({ action: '借出', objectType: '固定資產', key: p.fixed['資產編號'], before: fr.before, after: Object.assign({ 借用單: id, 系所物品: p.it['系所編號'] || p.it['物品ID'] }, fr.after) });
+  });
+  const lr = applyChanges(loan, { '狀態': LOAN_OUT, '借出時間': nowText, '備註': [loan['備註'], payload.note].filter(Boolean).join('；').slice(0, 300) },
+    ['狀態', '借出時間', '備註'], actor.email, nowText);
+  writeRow_(sh, loan._row, lr.row);
+  logs.unshift({ action: '借用單借出', objectType: '借用單', key: id, before: lr.before, after: Object.assign({ 件數: logs.length }, lr.after) });
+  writeLogs_(actor, logs, payload.note || '');
+  return loanGet_({ id: id });
+}
+
+/** 上傳簽好的借用單掃描檔（JPEG、PNG 或 PDF，5 MB 內），存到 借用/<單號>/。payload：{ id, base64, mime, name }。 */
+function loanUploadScan_(payload, actor) {
+  const sh = loanSheet_();
+  const loan = findLoan_(payload.id);
+  const mimes = { 'image/jpeg': 'jpg', 'image/png': 'png', 'application/pdf': 'pdf' };
+  if (!mimes[payload.mime]) throw new AppError('BAD_REQUEST', '只接受 JPEG、PNG 或 PDF');
+  const bytes = Utilities.base64Decode(String(payload.base64 || ''));
+  if (!bytes.length) throw new AppError('BAD_REQUEST', '沒有收到檔案');
+  if (bytes.length > 5 * 1024 * 1024) throw new AppError('BAD_REQUEST', '檔案超過 5 MB');
+  const props = PropertiesService.getScriptProperties();
+  const rootId = props.getProperty('FOLDER_LOANS');
+  if (!rootId) throw new AppError('NOT_CONFIGURED', '尚未執行 setup()：找不到借用資料夾');
+  const folder = ensureChildFolder_(DriveApp.getFolderById(rootId), loan['借用單號'], []);
+  const existing = String(loan['簽核單'] || '').split(',').filter(Boolean);
+  const name = '簽核單_' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd') + '_' + (existing.length + 1) + '.' + mimes[payload.mime];
+  const file = folder.createFile(Utilities.newBlob(bytes, payload.mime, name));
+  const r = applyChanges(loan, { '簽核單': existing.concat([file.getId()]).join(',') }, ['簽核單'], actor.email, now_());
+  writeRow_(sh, loan._row, r.row);
+  writeLog_(actor, '上傳簽核單', '借用單', loan['借用單號'], '', { 檔名: name, 原始檔名: String(payload.name || '').slice(0, 100) });
+  return { name: name, fileId: file.getId() };
+}
+
+/** 讀簽核單（管理用）。payload：{ id, fileId }。 */
+function loanScanGet_(payload) {
+  const loan = findLoan_(payload.id);
+  if (String(loan['簽核單'] || '').split(',').indexOf(payload.fileId) === -1) throw new AppError('NOT_FOUND', '找不到這個檔案');
+  const blob = DriveApp.getFileById(payload.fileId).getBlob();
+  return { name: blob.getName(), mime: blob.getContentType(), base64: Utilities.base64Encode(blob.getBytes()) };
+}

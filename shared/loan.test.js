@@ -82,3 +82,15 @@ test('通知信內容含單號、借用人、物品', () => {
   assert.strictEqual(m.subject, '[借用申請] L1 1 件');
   assert.ok(m.body.indexOf('CB-001 Chromebook') !== -1 && m.body.indexOf('https://x/') !== -1);
 });
+
+test('借出檢查：每筆都要處理、核對、兩張照片；不借的略過；至少一件；不可重複', () => {
+  const details = [{ '明細編號': 'D1', '系所內部編號': 'CB-001' }, { '明細編號': 'D2', '系所內部編號': 'CB-002' }];
+  assert.deepStrictEqual(L.checkoutErrors(details, [
+    { detailId: 'D1', itemId: 'I1', verified: true, photoCount: 2 }, { detailId: 'D2', itemId: '', verified: false, photoCount: 0 },
+  ]), []);
+  const e = L.checkoutErrors(details, [{ detailId: 'D1', itemId: 'I1', verified: false, photoCount: 1 }]);
+  assert.deepStrictEqual(e, ['CB-001：尚未核對實物（掃 QR 或勾選）', 'CB-001：借出照片至少 2 張', 'CB-002：沒有處理']);
+  assert.ok(L.checkoutErrors(details, [{ detailId: 'D1', itemId: '' }, { detailId: 'D2', itemId: '' }]).indexOf('至少要借出一件') !== -1);
+  assert.ok(L.checkoutErrors(details, [{ detailId: 'D1', itemId: 'I1', verified: true, photoCount: 2 }, { detailId: 'D2', itemId: 'I1', verified: true, photoCount: 2 }])
+    .indexOf('CB-002：同一件物品重複') !== -1);
+});

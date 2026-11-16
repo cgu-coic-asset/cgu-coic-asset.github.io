@@ -6,6 +6,7 @@
  * 盤點：#/inventory 批次清單與建立、#/inventory/<批次> 進度與未盤清單；資產頁「盤點」對話框；User 在「我名下的財產」自行盤點。
  * 異常案件：#/cases（處理中／已結案，Super 結案）；資產頁與批次頁「登記異常」。
  * 借用 A：公開清單選件數 → #/apply 申請 → 借用單（可列印）；#/loan 以單號＋手機查詢重印。
+ * 借用管理：#/loans（申請中／借出中／已結束）、#/loans/<單號>（借出核對、照片、簽核單）、#/loans/<單號>/print。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -163,6 +164,9 @@ const routes = [
   { re: /^#\/inventory$/, view: viewInventory, perm: 'inventory.record' },
   { re: /^#\/inventory\/([^/]+)$/, view: viewBatch, perm: 'inventory.record' },
   { re: /^#\/cases$/, view: viewCases, perm: 'case.open' },
+  { re: /^#\/loans$/, view: viewLoans, perm: 'loan.manage' },
+  { re: /^#\/loans\/([^/]+)$/, view: viewLoan, perm: 'loan.manage' },
+  { re: /^#\/loans\/([^/]+)\/print$/, view: viewLoanPrint, perm: 'loan.manage' },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'user.manage' },
   { re: /^#\/mine$/, view: viewMine, perm: 'self.view' },
   { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
@@ -206,7 +210,7 @@ function viewHome(view) {
       tile('#/scan', '掃描 QR', '查看、盤點、借出', true) +
       tile('#/assets', '資產清單', '查詢、編輯、經管人', true) +
       tile('#/inventory', '盤點', '批次、進度、未盤清單', true) +
-      tile('#/loans', '借用', '申請、借出、歸還', false) +
+      tile('#/loans', '借用', '申請、借出、歸還', true) +
       tile('#/import', '匯入', '學校清冊 Excel', true) +
       tile('#/public', '可借設備', '公開頁（訪客看到的）', true) +
       tile('#/cases', '異常案件', '登記、Super 結案', true) +
@@ -377,7 +381,7 @@ function viewLoanLookup(view) {
 }
 
 /** 借用單（可列印）：表頭、借用人、物品、借出與歸還簽名欄。 */
-function renderLoanSlip(view, data, fresh) {
+function renderLoanSlip(view, data, fresh, backHref, backText) {
   const l = data.loan;
   const kv = (k) => '<tr><th>' + esc(k) + '</th><td>' + esc(l[k] || '') + '</td></tr>';
   view.innerHTML = (fresh ? '<div class="card no-print"><strong>已送出申請。</strong><div class="meta">借用單號 <strong>' + esc(l['借用單號']) +
@@ -392,7 +396,8 @@ function renderLoanSlip(view, data, fresh) {
     '</tbody></table>' +
     '<p class="meta">借用人同意妥善使用並於預計歸還日前歸還；遺失或損壞依規定賠償。</p>' +
     '<div class="signs"><div>借用人簽名<span></span></div><div>借出經手人<span></span></div><div>借出日期<span></span></div><div>全部歸還確認<span></span></div></div></div>' +
-    '<div class="row no-print" style="margin-top:12px"><button type="button" class="primary" id="slipPrint">列印借用單</button><a class="btn" href="#/public">回可借設備</a></div>';
+    '<div class="row no-print" style="margin-top:12px"><button type="button" class="primary" id="slipPrint">列印借用單</button><a class="btn" href="' +
+    esc(backHref || '#/public') + '">' + esc(backText || '回可借設備') + '</a></div>';
   $('#slipPrint').onclick = () => window.print();
 }
 
@@ -591,7 +596,7 @@ function viewScan(view) {
 }
 
 /** 開後鏡頭連續辨識：有 BarcodeDetector（Android Chrome）直接用，否則載入 jsQR（iPhone Safari）。 */
-async function startScanner(video, msg) {
+async function startScanner(video, msg, onText) {
   stopScanner();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     msg.textContent = '這個瀏覽器不支援相機，請用手機相機 App 掃描，或在下方輸入編號。';
@@ -646,6 +651,16 @@ async function startScanner(video, msg) {
     try { text = await detect(); } catch (e) { text = ''; }
     if (s.stopped) return;
     if (text) {
+      if (parseQrText(text) && onText) {
+        // 對話框連續掃描：同一張貼紙 1.5 秒內不重複處理
+        if (text !== s.last || Date.now() - s.lastAt > 1500) {
+          if (navigator.vibrate) navigator.vibrate(80);
+          s.last = text; s.lastAt = Date.now();
+          if (!onText(text)) { stopScanner(); return; }
+        }
+        setTimeout(tick, 300);
+        return;
+      }
       if (parseQrText(text)) {
         stopScanner();
         if (navigator.vibrate) navigator.vibrate(80);
@@ -1549,6 +1564,230 @@ function closeCaseDialog(c, done) {
       toast(e.message, true);
     }
   };
+}
+
+// ----- 借用管理（借用 A）-----
+
+const LOAN_TABS = [['申請中', [LOAN_APPLIED]], ['借出中', [LOAN_OUT]], ['已結束', [LOAN_RETURNED, LOAN_VOID]]];
+
+async function viewLoans(view) {
+  view.innerHTML = '<h1>借用</h1><p class="muted">載入中…</p>';
+  let data;
+  try { data = await api('loan.list'); } catch (e) { view.innerHTML = '<h1>借用</h1><div class="card"><p>' + esc(e.message) + '</p></div>'; return; }
+  const saved = Number(storeGet('asset.loanTab') || 0);
+  const tab = LOAN_TABS[saved] ? saved : 0;
+  view.innerHTML = '<h1>借用</h1><div class="tabs">' + LOAN_TABS.map((t, i) => '<button type="button" data-t="' + i + '" class="' + (i === tab ? 'on' : '') + '">' +
+    t[0] + ' ' + data.loans.filter((l) => t[1].indexOf(l['狀態']) !== -1).length + '</button>').join('') + '</div>' +
+    '<div class="card"><div class="row"><input id="loQ" class="grow1" type="search" placeholder="單號、借用人、學號、系所編號…"><a class="btn" href="#/public">可借設備</a></div></div><div id="loList"></div>';
+  view.querySelectorAll('[data-t]').forEach((b) => { b.onclick = () => { storeSet('asset.loanTab', b.dataset.t); viewLoans(view); }; });
+  const draw = () => {
+    const words = $('#loQ').value.toLowerCase().split(/\s+/).filter(Boolean);
+    const list = data.loans.filter((l) => LOAN_TABS[tab][1].indexOf(l['狀態']) !== -1).filter((l) => {
+      const text = [l['借用單號'], l['借用人姓名'], l['學號或職號'], l['系所單位']].concat(l.items.map((i) => i.code)).join(' ').toLowerCase();
+      return words.every((w) => text.indexOf(w) !== -1);
+    });
+    $('#loList').innerHTML = '<div class="card"><ul class="list">' + (list.map((l) => '<li><a href="#/loans/' + encodeURIComponent(l['借用單號']) + '" style="color:inherit;text-decoration:none">' +
+      '<div class="row spread"><strong>' + esc(l['借用單號']) + ' ' + esc(l['借用人姓名']) + '</strong><span class="chip">' + esc(l['狀態']) + '</span></div>' +
+      '<div class="meta">' + esc(l['系所單位']) + '｜' + esc(l['預計借出日']) + ' ～ ' + esc(l['預計歸還日']) + '｜申請 ' + esc(String(l['申請時間']).slice(0, 16)) + '</div>' +
+      '<div class="codes" style="margin-top:4px">' + l.items.map((i) => '<span class="chip">' + esc(i.code) + '</span>').join('') + '</div></a></li>').join('') ||
+      '<li class="muted">沒有借用單</li>') + '</ul></div>';
+  };
+  $('#loQ').oninput = draw;
+  draw();
+}
+
+async function viewLoanPrint(view, params) {
+  view.innerHTML = '<p class="muted">載入中…</p>';
+  try {
+    const data = await api('loan.get', { id: params[0] });
+    const details = data.details.filter((d) => d['狀態'] !== DETAIL_VOID).map((d) => Object.assign({}, d, { '規格': d.item['規格'] }));
+    renderLoanSlip(view, { loan: loanForApplicant(data.loan, details), unit: data.unit }, false, '#/loans/' + encodeURIComponent(params[0]), '回借用單');
+  } catch (e) {
+    view.innerHTML = '<div class="card"><p>' + esc(e.message) + '</p></div>';
+  }
+}
+
+async function viewLoan(view, params) {
+  const id = params[0];
+  view.innerHTML = '<h1>借用單 ' + esc(id) + '</h1><p class="muted">載入中…</p>';
+  let data;
+  try { data = await api('loan.get', { id }); } catch (e) {
+    view.innerHTML = '<h1>借用單</h1><div class="card"><p>' + esc(e.message) + '</p></div><a class="btn" href="#/loans">回借用</a>';
+    return;
+  }
+  renderLoan(view, data);
+}
+
+function renderLoan(view, data) {
+  const l = data.loan;
+  const id = l['借用單號'];
+  const applying = l['狀態'] === LOAN_APPLIED;
+  const kv = (k, v) => v ? '<tr><th>' + esc(k) + '</th><td>' + esc(v) + '</td></tr>' : '';
+  // 借出作業的畫面狀態：每筆明細選哪件、是否核對、照片
+  const lines = data.details.filter((d) => d['狀態'] === DETAIL_APPLIED).map((d) => ({
+    d, itemId: d['資產鍵'], verified: false,
+    photos: d.photos.filter((p) => p.purpose === '借出' && p.key === d['資產鍵']).map((p) => p.id),
+  }));
+  const codeOf = (line) => {
+    if (!line.itemId) return '';
+    if (line.itemId === line.d['資產鍵']) return line.d.item['系所編號'] || line.itemId;
+    const c = (line.d.candidates || []).find((x) => x['物品ID'] === line.itemId);
+    return (c && c['系所編號']) || line.itemId;
+  };
+  const head = '<h1>借用單 ' + esc(id) + '</h1><div class="row" style="margin:-4px 0 10px"><span class="chip accent">' + esc(l['狀態']) + '</span></div>' +
+    '<div class="card"><table class="kv">' + kv('借用人', l['借用人姓名'] + '（' + l['學號或職號'] + '）') + kv('系所單位', l['系所單位']) +
+    kv('手機', l['手機']) + kv('Email', l['Email']) + kv('指導教授', l['指導教授']) + kv('用途', l['用途']) + kv('使用地點', l['使用地點']) +
+    kv('預計期間', l['預計借出日'] + ' ～ ' + l['預計歸還日']) + kv('申請時間', l['申請時間']) + kv('借出時間', l['借出時間']) + kv('結案時間', l['結案時間']) + kv('備註', l['備註']) +
+    '</table><div class="row" style="margin-top:8px"><a class="btn" href="#/loans/' + encodeURIComponent(id) + '/print">列印借用單</a></div></div>';
+
+  if (!applying) {
+    const rows = data.details.map((d) => '<li><div class="row spread"><strong><span class="code">' + esc(d['系所內部編號'] || d['資產鍵']) + '</span> ' + esc(d['名稱']) + '</strong>' +
+      '<span class="chip">' + esc(d['狀態']) + '</span></div><div class="meta">' + (d['借出時間'] ? '借出 ' + esc(d['借出時間']) + ' ' + esc(d['借出經手人']) : '') +
+      (d['申請物品'] ? '｜換件（原申請 ' + esc(d['申請物品']) + '）' : '') + (d['歸還時間'] ? '｜歸還 ' + esc(d['歸還時間']) : '') + (d['備註'] ? '｜' + esc(d['備註']) : '') + '</div>' +
+      (d.photos.length ? '<button type="button" class="small" data-photos="' + esc(d.photos.map((p) => p.id).join(',')) + '">照片 ' + d.photos.length + '</button>' : '') + '</li>').join('');
+    const scans = String(l['簽核單'] || '').split(',').filter(Boolean);
+    view.innerHTML = head + '<div class="card"><h2>物品</h2><ul class="list">' + rows + '</ul></div>' +
+      (l['狀態'] === LOAN_VOID ? '' : '<div class="card"><h2>簽核單掃描檔</h2><ul class="list">' + (scans.map((f, i) => '<li><button type="button" class="small" data-scan="' + esc(f) + '">簽核單 ' + (i + 1) + '</button></li>').join('') ||
+        '<li class="muted">還沒有上傳。借出時簽好的借用單請掃描或拍照上傳。</li>') + '</ul>' +
+        '<div class="row" style="margin-top:8px"><button type="button" class="primary" id="scanUp">上傳簽核單（照片或 PDF）</button><input type="file" id="scanFile" accept="image/*,application/pdf" hidden></div></div>') +
+      '<a class="btn" href="#/loans">回借用</a>';
+    view.querySelectorAll('[data-photos]').forEach((b) => { b.onclick = () => showPhotoIds(b.dataset.photos.split(',')); });
+    view.querySelectorAll('[data-scan]').forEach((b) => {
+      b.onclick = async () => {
+        try {
+          const f = await api('loan.scan', { id, fileId: b.dataset.scan });
+          const bin = atob(f.base64); const arr = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+          window.open(URL.createObjectURL(new Blob([arr], { type: f.mime })), '_blank');
+        } catch (e) { toast(e.message, true); }
+      };
+    });
+    if ($('#scanUp')) {
+      $('#scanUp').onclick = () => $('#scanFile').click();
+      $('#scanFile').onchange = async () => {
+        const file = $('#scanFile').files[0];
+        $('#scanFile').value = '';
+        if (!file) return;
+        try {
+          toast('上傳中…');
+          let blob = file, mime = file.type;
+          if (mime !== 'application/pdf') { blob = await compressImage(file, 2400, 0.85); mime = 'image/jpeg'; }
+          const r = await api('loan.uploadScan', { id, base64: await blobToBase64(blob), mime, name: file.name });
+          toast('已上傳 ' + r.name);
+          viewLoan(view, [id]);
+        } catch (e) { toast(e.message, true); }
+      };
+    }
+    return;
+  }
+
+  view.innerHTML = head + '<div class="card"><div class="row spread"><h2 style="margin:0">借出核對</h2><button type="button" class="primary" id="coScan">📷 掃 QR 核對</button></div>' +
+    '<p class="meta muted">每件：掃貼紙 QR（或勾「已核對」）、拍 ' + CHECKOUT_MIN_PHOTOS + ' 張借出照片。可換成同款的其他件，或設為不借。完成後按「借出」，再印借用單請借用人簽名。</p>' +
+    '<ul class="list" id="coLines"></ul><input type="file" id="coFile" accept="image/*" hidden>' +
+    '<label for="coNote">借出備註</label><input id="coNote">' +
+    '<div id="coErr" class="meta" style="color:var(--bad);margin-top:6px"></div>' +
+    '<div class="row" style="justify-content:flex-end;margin-top:8px"><button type="button" class="primary" id="coGo">借出</button></div></div>' +
+    '<a class="btn" href="#/loans">回借用</a>';
+
+  const drawLines = () => {
+    $('#coLines').innerHTML = lines.map((line, i) => {
+      const d = line.d;
+      const opts = '<option value="' + esc(d['資產鍵']) + '">' + esc((d.item['系所編號'] || d['資產鍵']) + '（申請的）') + '</option>' +
+        (d.candidates || []).map((c) => '<option value="' + esc(c['物品ID']) + '"' + (c['物品ID'] === line.itemId ? ' selected' : '') + '>換成 ' + esc(c['系所編號'] || c['物品ID']) + '</option>').join('') +
+        '<option value=""' + (!line.itemId ? ' selected' : '') + '>（不借這件）</option>';
+      const st = d.item['狀態'] !== '在庫' || d.item['開放借用'] !== '是' ? '<span class="chip bad">申請的這件目前' + esc(d.item['狀態']) + (d.item['開放借用'] !== '是' ? '、不開放' : '') + '，請換件或不借</span>' : '';
+      return '<li data-i="' + i + '"><div><strong><span class="code">' + esc(codeOf(line) || '不借') + '</span> ' + esc(d['名稱']) + '</strong>' +
+        (d.item['資產編號'] ? '<span class="chip">連結固定資產 ' + esc(d.item['資產編號']) + '</span>' : '') + ' ' + st + '</div>' +
+        '<div class="row" style="margin-top:6px"><select data-sel="' + i + '" style="width:auto">' + opts + '</select>' +
+        (line.itemId ? '<label class="radio"><input type="checkbox" data-ver="' + i + '"' + (line.verified ? ' checked' : '') + '> 已核對實物</label>' +
+          '<button type="button" class="small primary" data-cam="' + i + '">📷</button><button type="button" class="small" data-lib="' + i + '">🖼</button>' +
+          '<span class="chip ' + (line.photos.length >= CHECKOUT_MIN_PHOTOS ? 'ok' : 'warn') + '">照片 ' + line.photos.length + '／' + CHECKOUT_MIN_PHOTOS + '</span>' +
+          (line.photos.length ? '<button type="button" class="small" data-see="' + i + '">看照片</button>' : '') : '') + '</div>' +
+        '<div class="meta" data-msg="' + i + '"></div></li>';
+    }).join('');
+    $('#coLines').querySelectorAll('[data-sel]').forEach((el) => {
+      el.value = lines[+el.dataset.sel].itemId;
+      el.onchange = () => {
+        const line = lines[+el.dataset.sel];
+        line.itemId = el.value; line.verified = false;
+        line.photos = line.d.photos.filter((p) => p.purpose === '借出' && p.key === line.itemId).map((p) => p.id);
+        drawLines();
+      };
+    });
+    $('#coLines').querySelectorAll('[data-ver]').forEach((el) => { el.onchange = () => { lines[+el.dataset.ver].verified = el.checked; }; });
+    $('#coLines').querySelectorAll('[data-see]').forEach((el) => { el.onclick = () => showPhotoIds(lines[+el.dataset.see].photos); });
+    $('#coLines').querySelectorAll('[data-cam],[data-lib]').forEach((el) => {
+      el.onclick = () => {
+        picking = +(el.dataset.cam || el.dataset.lib);
+        if (el.dataset.cam !== undefined) $('#coFile').setAttribute('capture', 'environment'); else $('#coFile').removeAttribute('capture');
+        $('#coFile').click();
+      };
+    });
+  };
+  let picking = -1;
+  $('#coFile').onchange = async () => {
+    const file = $('#coFile').files[0];
+    $('#coFile').value = '';
+    if (!file || picking < 0) return;
+    const line = lines[picking];
+    const msg = $('#coLines').querySelector('[data-msg="' + picking + '"]');
+    try {
+      msg.textContent = '上傳中…';
+      const takenAt = await readExifDate(file);
+      const blob = await compressImage(file);
+      const rec = await api('loan.photo', { loanId: id, detailId: line.d['明細編號'], itemId: line.itemId, purpose: '借出', base64: await blobToBase64(blob), takenAt, originalName: file.name });
+      line.photos.push(rec['照片編號']);
+      line.d.photos.push({ id: rec['照片編號'], purpose: '借出', key: line.itemId, name: rec['檔名'] });
+      drawLines();
+    } catch (e) {
+      msg.innerHTML = '<span style="color:var(--bad)">✖ ' + esc(e.message) + '</span>';
+    }
+  };
+  // 掃 QR：符合某筆目前選的物品→已核對；符合某筆的候選→換成那件並核對
+  $('#coScan').onclick = () => {
+    const dlg = $('#dialog');
+    const form = $('#dialogForm');
+    form.innerHTML = '<h2>掃 QR 核對</h2><div class="scanbox"><video id="coVideo" playsinline muted autoplay></video><div class="scanframe"></div></div>' +
+      '<p class="meta" id="coMsg">正在開啟相機…</p><div class="row" style="justify-content:flex-end"><button value="cancel">完成</button></div>';
+    dlg.showModal();
+    dlg.addEventListener('close', () => { stopScanner(); drawLines(); }, { once: true });
+    startScanner($('#coVideo'), $('#coMsg'), (text) => {
+      const p = parseQrText(text);
+      if (!p || p.type !== 'ITEM') { $('#coMsg').textContent = '不是系所物品的貼紙'; return true; }
+      const k = p.key;
+      const match = (id2, code) => id2 === k || (code && code === k);
+      let line = lines.find((ln) => ln.itemId && (match(ln.itemId, codeOf(ln))));
+      if (!line) {
+        line = lines.find((ln) => !ln.verified && (ln.d.candidates || []).some((c) => match(c['物品ID'], c['系所編號'])));
+        if (line) {
+          const c = line.d.candidates.find((x) => match(x['物品ID'], x['系所編號']));
+          line.itemId = c['物品ID'];
+          line.photos = line.d.photos.filter((ph) => ph.purpose === '借出' && ph.key === line.itemId).map((ph) => ph.id);
+        }
+      }
+      if (!line) { $('#coMsg').textContent = k + ' 不在這張借用單，也不是可換的同款物品'; return true; }
+      line.verified = true;
+      $('#coMsg').textContent = '✔ ' + codeOf(line) + ' 已核對（' + lines.filter((ln) => ln.itemId && ln.verified).length + '／' + lines.filter((ln) => ln.itemId).length + '）';
+      return true;
+    });
+  };
+  $('#coGo').onclick = async (ev) => {
+    const payloadLines = lines.map((ln) => ({ detailId: ln.d['明細編號'], itemId: ln.itemId, verified: ln.verified, photoIds: ln.photos, photoCount: ln.photos.length }));
+    const errs = checkoutErrors(lines.map((ln) => ln.d), payloadLines);
+    if (errs.length) { $('#coErr').innerHTML = errs.map(esc).join('<br>'); return; }
+    $('#coErr').textContent = '';
+    ev.target.disabled = true;
+    try {
+      const r = await api('loan.checkout', { id, version: l['版本'], lines: payloadLines, note: $('#coNote').value });
+      toast('已借出，請列印借用單簽名');
+      if (state.assets) delete state.assets.ITEM;
+      renderLoan(view, r);
+    } catch (e) {
+      ev.target.disabled = false;
+      $('#coErr').innerHTML = esc(e.message).replace(/；/g, '<br>');
+    }
+  };
+  drawLines();
 }
 
 // ----- 貼紙 -----
