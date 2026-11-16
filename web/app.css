@@ -170,3 +170,4 @@ input.qty { width: 5em; display: inline-block; min-height: 32px; padding: 4px 8p
   .slip { border: 0; padding: 0; }
   body { font-size: 12pt; }
 }
+.hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }

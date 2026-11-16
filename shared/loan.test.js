@@ -45,3 +45,27 @@ test('給申請人看的借用單不含系統欄位', () => {
   assert.strictEqual(out.details[0]['系所編號'], 'CB-001');
   assert.strictEqual(out.details[0]['借出經手人'], undefined);
 });
+
+test('防機器人：隱藏欄位有值、填太快、沒有時間都擋', () => {
+  assert.strictEqual(L.botCheck({ hp: '', elapsed: 30 }), '');
+  assert.ok(L.botCheck({ hp: 'http://spam', elapsed: 30 }));
+  assert.ok(L.botCheck({ hp: '', elapsed: 2 }));
+  assert.ok(L.botCheck({}));
+});
+
+test('頻率：全系統、同聯絡方式、同手機申請中', () => {
+  assert.strictEqual(L.rateCheck({ contact: 2, global: 29, openPhone: 2 }), '');
+  assert.match(L.rateCheck({ global: 30 }), /太多/);
+  assert.match(L.rateCheck({ contact: 3 }), /一小時內最多送出 3 張/);
+  assert.match(L.rateCheck({ openPhone: 3 }), /3 張申請中/);
+});
+
+test('申請中逾期作廢與天數', () => {
+  const loan = { '狀態': '申請中', '申請時間': '2026-11-01 10:00:00' };
+  assert.strictEqual(L.isApplicationExpired(loan, '2026-11-08', '7'), false);
+  assert.strictEqual(L.isApplicationExpired(loan, '2026-11-09', '7'), true);
+  assert.strictEqual(L.isApplicationExpired(Object.assign({}, loan, { '狀態': '借出中' }), '2026-12-01', '7'), false);
+  assert.strictEqual(L.isApplicationExpired(loan, '2026-12-01', ''), false);
+  assert.strictEqual(L.applicationAgeDays(loan, '2026-11-04'), 3);
+  assert.strictEqual(L.applicationAgeDays({ '狀態': '已歸還' }, '2026-11-04'), -1);
+});

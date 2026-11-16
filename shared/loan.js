@@ -111,8 +111,51 @@ function loanForApplicant(loan, details) {
   return out;
 }
 
+/** 防濫用門檻：同一手機或 Email 一小時內最多幾張、全系統一小時最多幾張、表單最少要填幾秒、同一手機最多幾張申請中。 */
+var LOAN_LIMITS = { perContactPerHour: 3, globalPerHour: 30, minFillSeconds: 5, openPerPhone: 3 };
+
+/**
+ * 防機器人檢查。meta：{ hp（隱藏欄位，人不會填）, elapsed（表單開啟到送出的秒數） }。
+ * 回傳錯誤訊息或空字串；訊息不透露是哪一項。
+ */
+function botCheck(meta) {
+  const m = meta || {};
+  if (String(m.hp || '').trim()) return '無法送出，請重新整理後再試';
+  const t = Number(m.elapsed);
+  if (!isFinite(t) || t < LOAN_LIMITS.minFillSeconds) return '無法送出，請重新整理後再試';
+  return '';
+}
+
+/**
+ * 頻率檢查。counts：{ contact（同手機或 Email 近一小時張數，取大者）, global（近一小時全部張數）, openPhone（同手機申請中張數） }。
+ */
+function rateCheck(counts) {
+  const c = counts || {};
+  if ((c.global || 0) >= LOAN_LIMITS.globalPerHour) return '目前申請太多，請稍後再試或洽系辦';
+  if ((c.contact || 0) >= LOAN_LIMITS.perContactPerHour) return '同一手機或 Email 一小時內最多送出 ' + LOAN_LIMITS.perContactPerHour + ' 張，請稍後再試';
+  if ((c.openPhone || 0) >= LOAN_LIMITS.openPerPhone) return '您已有 ' + c.openPhone + ' 張申請中的借用單，請先到系辦借出或等候作廢';
+  return '';
+}
+
+/** 申請中是否已逾期作廢：申請日（yyyy-MM-dd…）距今天（yyyy-mm-dd）超過 days 天。days 無效時不作廢。 */
+function isApplicationExpired(loan, today, days) {
+  const n = parseInt(days, 10);
+  if (loan['狀態'] !== LOAN_APPLIED || !(n > 0)) return false;
+  const applied = String(loan['申請時間'] || '').slice(0, 10);
+  if (!normalizeDate(applied) || !normalizeDate(today)) return false;
+  return daysBetween(applied, today) > n;
+}
+
+/** 申請中超過幾天（首頁提醒用）；不是申請中回傳 -1。 */
+function applicationAgeDays(loan, today) {
+  if (loan['狀態'] !== LOAN_APPLIED) return -1;
+  const applied = String(loan['申請時間'] || '').slice(0, 10);
+  return normalizeDate(applied) ? daysBetween(applied, today) : -1;
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
+    LOAN_LIMITS, botCheck, rateCheck, isApplicationExpired, applicationAgeDays,
     LOAN_APPLIED, LOAN_OUT, LOAN_RETURNED, LOAN_VOID, LOAN_OPEN_STATES, DETAIL_APPLIED, DETAIL_OUT, DETAIL_RETURNED, DETAIL_VOID,
     LOAN_MAX_ITEMS, LOAN_MAX_DAYS, LOAN_APPLICANT_FIELDS, nextLoanId, isLoanOpen, normalizeDate, daysBetween, validateLoanRequest, loanForApplicant,
   };

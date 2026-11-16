@@ -177,3 +177,20 @@ function seedFirstAdmin_(sh, report) {
   });
   report.push('建立 Super ' + INITIAL_ADMIN_EMAIL);
 }
+
+/**
+ * 安裝排程（在編輯器以存放帳號執行一次；重跑不會重複安裝）。
+ * dailyLoanCleanup：每天凌晨 3 點作廢逾期的借用申請。
+ */
+function installTriggers() {
+  const want = [{ fn: 'dailyLoanCleanup', hour: 3 }];
+  const have = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
+  const report = [];
+  want.forEach(function (w) {
+    if (have.indexOf(w.fn) !== -1) { report.push('沿用 ' + w.fn); return; }
+    ScriptApp.newTrigger(w.fn).timeBased().everyDays(1).atHour(w.hour).inTimezone(TZ).create();
+    report.push('安裝 ' + w.fn + '（每天 ' + w.hour + ' 點）');
+  });
+  console.log(report.join('\n'));
+  return report;
+}

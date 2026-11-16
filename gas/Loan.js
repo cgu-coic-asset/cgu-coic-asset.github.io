@@ -25,9 +25,21 @@ function reservedItems_() {
  * 物品必須開放借用、在庫、沒有被其他申請占用。回傳給申請人看的借用單（可列印）。
  */
 function loanApply_(payload, actor) {
-  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const now = new Date();
+  const today = Utilities.formatDate(now, TZ, 'yyyy-MM-dd');
+  // 已登入的管理者代填不檢查機器人與頻率
+  const isStaff = can(actor.role, 'loan.manage');
+  if (!isStaff) {
+    const bot = botCheck(payload._meta);
+    if (bot) throw new AppError('BAD_REQUEST', bot);
+  }
   const v = validateLoanRequest(payload, today);
   if (!v.ok) throw new AppError('BAD_REQUEST', v.errors.join('；'), { errors: v.errors });
+  voidExpiredLoans_(SYSTEM_ACTOR_);
+  if (!isStaff) {
+    const rate = rateCheck(loanCounts_(v.data, now));
+    if (rate) throw new AppError('BAD_REQUEST', rate);
+  }
 
   const items = readRows_(itemSheet_());
   const reserved = reservedItems_();
@@ -64,6 +76,73 @@ function loanApply_(payload, actor) {
     借用人: v.data['借用人姓名'], 件數: details.length, 物品: details.map(function (d) { return d['系所內部編號'] || d['資產鍵']; }).join('、'),
   }, '', '網頁');
   return { loan: loanForApplicant(loan, details), unit: setting_('單位名稱') };
+}
+
+/** 排程與自動處理用的操作者。 */
+var SYSTEM_ACTOR_ = { email: '', name: '系統排程', role: ROLE_SUPER, loggedIn: false, codes: [] };
+
+/** 頻率計數：近一小時全部、同手機或 Email、同手機申請中。 */
+function loanCounts_(data, now) {
+  const since = Utilities.formatDate(new Date(now.getTime() - 3600000), TZ, 'yyyy-MM-dd HH:mm:ss');
+  const phone = String(data['手機']).replace(/\D/g, '');
+  const email = String(data['Email']).toLowerCase();
+  const out = { global: 0, contact: 0, openPhone: 0 };
+  let byPhone = 0;
+  let byEmail = 0;
+  readRows_(loanSheet_()).forEach(function (r) {
+    const samePhone = String(r['手機']).replace(/\D/g, '') === phone;
+    if (samePhone && r['狀態'] === LOAN_APPLIED) out.openPhone++;
+    if (String(r['申請時間']) < since) return;
+    out.global++;
+    if (samePhone) byPhone++;
+    if (String(r['Email']).toLowerCase() === email) byEmail++;
+  });
+  out.contact = Math.max(byPhone, byEmail);
+  return out;
+}
+
+/**
+ * 申請中超過「申請作廢天數」的借用單改為已作廢（明細一起），物品不再被占用。
+ * 呼叫端須已取得指令碼鎖。回傳作廢的單號。
+ */
+function voidExpiredLoans_(actor) {
+  const days = setting_('申請作廢天數');
+  const today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  const sh = loanSheet_();
+  const loans = readRows_(sh);
+  const expired = loans.filter(function (l) { return isApplicationExpired(l, today, days); });
+  if (!expired.length) return [];
+  const nowText = now_();
+  const ids = expired.map(function (l) { return l['借用單號']; });
+  const logs = [];
+  expired.forEach(function (l) {
+    const r = applyChanges(l, { '狀態': LOAN_VOID, '結案時間': nowText }, ['狀態', '結案時間'], actor.email || '系統排程', nowText);
+    Object.assign(l, r.row);
+    logs.push({ action: '借用申請作廢', objectType: '借用單', key: l['借用單號'], before: r.before, after: r.after });
+  });
+  writeAllRows_(sh, loans, []);
+  const dsh = loanDetailSheet_();
+  const details = readRows_(dsh);
+  let changed = false;
+  details.forEach(function (d) {
+    if (ids.indexOf(d['借用單號']) === -1 || d['狀態'] !== DETAIL_APPLIED) return;
+    Object.assign(d, applyChanges(d, { '狀態': DETAIL_VOID }, ['狀態'], actor.email || '系統排程', nowText).row);
+    changed = true;
+  });
+  if (changed) writeAllRows_(dsh, details, []);
+  writeLogs_(actor, logs, '申請中超過 ' + days + ' 天未借出', '排程');
+  return ids;
+}
+
+/** 每日排程（installTriggers 安裝）：作廢逾期申請。 */
+function dailyLoanCleanup() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(60000)) return;
+  try {
+    voidExpiredLoans_(SYSTEM_ACTOR_);
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /** 依單號＋手機查自己的借用單（重新列印用）。手機只比對數字。 */

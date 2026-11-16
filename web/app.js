@@ -334,13 +334,16 @@ async function viewApply(view) {
     items.map((it) => '<li><span class="code">' + esc(it.code || '未編號') + '</span> ' + esc(it.name) + (it.spec ? '<div class="meta">' + esc(it.spec) + '</div>' : '') + '</li>').join('') +
     '</ul><a class="small" href="#/public">修改選擇</a></div>' +
     '<form class="card" id="apForm">' + LOAN_APPLICANT_FIELDS.map(field).join('') +
+    // 防機器人：人看不到、不會填的欄位
+    '<div class="hp" aria-hidden="true"><label for="apWebsite">網站</label><input id="apWebsite" name="website" tabindex="-1" autocomplete="off"></div>' +
     '<p class="meta muted">送出後會產生借用單號，請印出（或存 PDF）帶到系辦，借出時簽名。資料只用於本次借用管理。</p>' +
     '<div id="apErr" class="meta" style="color:var(--bad)"></div>' +
     '<div class="row" style="justify-content:flex-end"><button class="primary" type="submit" id="apGo">送出申請</button></div></form>';
   $('#ap_預計借出日').value = today;
+  const openedAt = Date.now();
   $('#apForm').onsubmit = async (ev) => {
     ev.preventDefault();
-    const payload = { items: items.map((it) => it.id) };
+    const payload = { items: items.map((it) => it.id), _meta: { hp: $('#apWebsite').value, elapsed: Math.round((Date.now() - openedAt) / 1000) } };
     LOAN_APPLICANT_FIELDS.forEach((f) => { payload[f.name] = $('#ap_' + f.name).value; });
     const check = validateLoanRequest(payload, today);
     if (!check.ok) { $('#apErr').innerHTML = check.errors.map(esc).join('<br>'); return; }
