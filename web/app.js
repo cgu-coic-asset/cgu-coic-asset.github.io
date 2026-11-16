@@ -7,7 +7,7 @@
  * 異常案件：#/cases（處理中／已結案，Super 結案）；資產頁與批次頁「登記異常」。
  * 借用 A：公開清單選件數 → #/apply 申請 → 借用單（可列印）；#/loan 以單號＋手機查詢重印。
  * 借用管理：#/loans（申請中／借出中／已結束）、#/loans/<單號>（借出核對、照片、簽核單）、#/loans/<單號>/print。
- * 資產自主盤點資料表：#/selfcheck 或 #/selfcheck/<批次>，固定資產每件一頁，列印或存 PDF。
+ * 資產自主盤點資料表：#/selfcheck 或 #/selfcheck/<批次>，固定資產每件一頁，列印或存 PDF，或匯出 Word（每檔 50 件）。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -2445,7 +2445,7 @@ function more(n) {
 
 // ---------- 資產自主盤點資料表（M3-01） ----------
 
-/** 讀原圖並縮成長邊 maxSide 的 JPEG（列印用；避免幾百張原圖占滿記憶體）。 */
+/** 讀原圖並縮成長邊 maxSide 的 JPEG（列印、Word 用；避免幾百張原圖占滿記憶體）。回傳 { url, w, h }。 */
 async function photoScaled(id, maxSide) {
   const r = await api('photo.get', { id });
   const img = new Image();
@@ -2456,7 +2456,7 @@ async function photoScaled(id, maxSide) {
   c.width = Math.round(img.naturalWidth * k);
   c.height = Math.round(img.naturalHeight * k);
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', 0.85);
+  return { url: c.toDataURL('image/jpeg', 0.85), w: c.width, h: c.height };
 }
 
 async function viewSelfCheck(view, params) {
@@ -2494,7 +2494,9 @@ async function viewSelfCheck(view, params) {
     '照片依序用本次盤點、最近一次盤點、建檔照片遞補，照片下標示拍攝日與來源；遞補不算已盤。盤點日期只填本次已盤的，其餘請手寫。分機請手寫。</p>' +
     '<div class="row spread"><span id="scCount"></span><span class="row"><button type="button" class="primary" id="scPrint">列印／存 PDF</button>' +
     '<a class="btn" href="' + (data.batch ? '#/inventory/' + encodeURIComponent(batchId) : '#/') + '">返回</a></span></div>' +
-    '<div class="meta muted" id="scProgress"></div></div></div><div id="scPages"></div>';
+    '<div class="meta muted" id="scProgress"></div></div>' +
+    '<div class="card"><h2>匯出 Word</h2><p class="meta muted">可在 Word 修改後再印。照片縮成長邊 ' + DOCX_PHOTO_SIDE + ' 像素，每檔最多 ' + DOCX_MAX_PAGES +
+    ' 件；件數多時分成多個檔案，逐一下載。</p><div class="row" id="scWord"></div><div class="meta muted" id="scWordMsg"></div></div></div><div id="scPages"></div>';
 
   $('#scBatch').onchange = () => { location.hash = '#/selfcheck/' + encodeURIComponent($('#scBatch').value || '-'); };
   let run = 0;
@@ -2507,6 +2509,15 @@ async function viewSelfCheck(view, params) {
     $('#scCount').innerHTML = '<strong>' + rows.length + ' 頁</strong> <span class="muted">' +
       SC_STATES.filter((x) => counts[x]).map((x) => x + ' ' + counts[x]).join('、') + '</span>';
     $('#scPages').innerHTML = rows.map(selfCheckPage).join('') || '<div class="card no-print"><p class="muted">沒有符合的資產。</p></div>';
+    const chunks = docxChunks(rows);
+    const depts = rows.map((r) => r['部門代號']).filter((v, i, a) => v && a.indexOf(v) === i);
+    const base = selfCheckFileName(new Date().getFullYear() + '0101', depts.length === 1 ? depts[0] : '', batchId);
+    $('#scWord').innerHTML = chunks.map((c, i) => '<button type="button" data-part="' + i + '">' +
+      (chunks.length > 1 ? '第 ' + (i + 1) + ' 份（' + (i * DOCX_MAX_PAGES + 1) + '～' + (i * DOCX_MAX_PAGES + c.length) + '）' : '下載 Word（' + c.length + ' 件）') + '</button>').join('') ||
+      '<span class="muted">沒有資產可匯出。</span>';
+    $('#scWord').querySelectorAll('button[data-part]').forEach((b) => {
+      b.onclick = () => exportSelfCheckDocx(chunks[+b.dataset.part], base + (chunks.length > 1 ? '_' + (+b.dataset.part + 1) : '') + '.docx', b);
+    });
     loadSelfCheckPhotos(++run, () => run);
   };
   ['#scCust', '#scPlace', '#scState'].forEach((s) => { $(s).onchange = draw; });
@@ -2531,6 +2542,63 @@ function selfCheckPage(r) {
     '</table></section>';
 }
 
+const JSZIP_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+
+/** 匯出一份 Word：逐張讀照片縮成長邊 800，組成 .docx 下載。 */
+async function exportSelfCheckDocx(rows, fileName, button) {
+  const msg = $('#scWordMsg');
+  const buttons = Array.from(document.querySelectorAll('#scWord button'));
+  buttons.forEach((b) => { b.disabled = true; });
+  try {
+    if (!window.JSZip) await loadScript(JSZIP_URL);
+    const zip = new JSZip();
+    const media = [];
+    const ids = [];
+    rows.forEach((r) => r.entry.photos.forEach((p) => { if (p.id && ids.indexOf(p.id) === -1) ids.push(p.id); }));
+    const scaled = {};
+    let done = 0, failed = 0, next = 0;
+    const worker = async () => {
+      while (next < ids.length) {
+        const id = ids[next++];
+        try { scaled[id] = await photoScaled(id, DOCX_PHOTO_SIDE); } catch (e) { failed++; }
+        done++;
+        msg.textContent = '讀取照片 ' + done + '／' + ids.length + (failed ? '（' + failed + ' 張失敗，會顯示沒有照片）' : '');
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    const ridOf = {};
+    const pages = rows.map((r) => Object.assign({}, r, {
+      images: r.entry.photos.map((p, i) => {
+        const sc = p.id && scaled[p.id];
+        if (!sc) return null;
+        if (!ridOf[p.id]) {
+          ridOf[p.id] = 'rIdImg' + (media.length + 1);
+          const name = 'photo' + (media.length + 1) + '.jpg';
+          media.push({ rid: ridOf[p.id], name });
+          zip.file('word/media/' + name, sc.url.split(',')[1], { base64: true });
+        }
+        return Object.assign({ rid: ridOf[p.id], name: p.slot + '.jpg' }, docxFit(sc.w, sc.h, i === 0 ? DOCX_BOX_BIG : DOCX_BOX_SMALL));
+      }),
+    }));
+    const parts = selfCheckDocxParts(pages, media);
+    Object.keys(parts).forEach((k) => zip.file(k, parts[k]));
+    msg.textContent = '產生檔案…';
+    const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+    msg.textContent = '已下載 ' + fileName + '（' + rows.length + ' 件，' + (blob.size / 1048576).toFixed(1) + ' MB）' + (failed ? '，' + failed + ' 張照片讀取失敗' : '');
+    button.classList.add('ok');
+  } catch (e) {
+    msg.textContent = '匯出失敗：' + e.message;
+  } finally {
+    buttons.forEach((b) => { b.disabled = false; });
+  }
+}
+
 /** 逐張讀照片（同時 3 張）；篩選改變後舊的工作停下。 */
 async function loadSelfCheckPhotos(myRun, currentRun) {
   const imgs = Array.from(document.querySelectorAll('img[data-sc]'));
@@ -2544,7 +2612,7 @@ async function loadSelfCheckPhotos(myRun, currentRun) {
   const worker = async () => {
     while (next < imgs.length && myRun === currentRun()) {
       const img = imgs[next++];
-      try { img.src = await photoScaled(img.dataset.sc, 1200); } catch (e) { failed++; img.replaceWith(Object.assign(document.createElement('div'), { className: 'sc-none', textContent: '（照片讀取失敗）' })); }
+      try { img.src = (await photoScaled(img.dataset.sc, 1200)).url; } catch (e) { failed++; img.replaceWith(Object.assign(document.createElement('div'), { className: 'sc-none', textContent: '（照片讀取失敗）' })); }
       done++;
       show();
     }
