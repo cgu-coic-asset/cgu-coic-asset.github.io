@@ -22,6 +22,7 @@ function assetList_(payload) {
     rows.forEach(function (r) { if (codes[r['資產編號']]) r['系所編號'] = codes[r['資產編號']]; });
   }
   out.inventory = inventoryInfo_(payload.type, null);
+  out.openCases = openCaseCountsAll_();
   out.rows = rows;
   return out;
 }
@@ -53,6 +54,7 @@ function assetGet_(payload) {
     out.items = readRows_(itemSheet_()).filter(function (r) { return r['資產編號'] === key && assetStatus(r) !== '報廢'; }).map(publicRow_);
   }
   out.inventory = inventoryForAsset_(payload.type, rows[0]);
+  out.cases = casesOfAsset_(payload.type, key);
   out.rows = rows;
   return out;
 }

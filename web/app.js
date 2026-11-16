@@ -4,6 +4,7 @@
  * 訪客看公開資訊（public.get）；Admin、Super 看管理頁（asset.get）。站內掃描頁 #/scan 用相機辨識後導到同一路由。
  * 公開頁 #/public（訪客首頁）：開放借用的系所物品清單（public.list），只有公開欄位與代表照片縮圖。
  * 盤點：#/inventory 批次清單與建立、#/inventory/<批次> 進度與未盤清單；資產頁「盤點」對話框；User 在「我名下的財產」自行盤點。
+ * 異常案件：#/cases（處理中／已結案，Super 結案）；資產頁與批次頁「登記異常」。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -158,6 +159,7 @@ const routes = [
   { re: /^#\/public$/, view: viewPublicList },
   { re: /^#\/inventory$/, view: viewInventory, perm: 'inventory.record' },
   { re: /^#\/inventory\/([^/]+)$/, view: viewBatch, perm: 'inventory.record' },
+  { re: /^#\/cases$/, view: viewCases, perm: 'case.open' },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'user.manage' },
   { re: /^#\/mine$/, view: viewMine, perm: 'self.view' },
   { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
@@ -204,7 +206,7 @@ function viewHome(view) {
       tile('#/loans', '借用', '申請、借出、歸還', false) +
       tile('#/import', '匯入', '學校清冊 Excel', true) +
       tile('#/public', '可借設備', '公開頁（訪客看到的）', true) +
-      tile('#/cases', '異常案件', '登記與處理', false) +
+      tile('#/cases', '異常案件', '登記、Super 結案', true) +
       (hasCodes ? tile('#/mine', '我名下的財產', '保管人代號 ' + me.codes.join('、'), true) : '') +
       (role === ROLE_ADMIN ? tile('#/admins', 'User 帳號', '綁定保管人代號', true) : '') +
       '</div>';
@@ -366,7 +368,7 @@ async function viewAsset(view, params) {
       '<a class="btn" href="#/assets">回資產清單</a>';
     return;
   }
-  renderAssetDetail(view, type, data.rows, data.managers, data.items, data.inventory);
+  renderAssetDetail(view, type, data.rows, data.managers, data.items, data.inventory, data.cases);
 }
 
 /** 訪客、尚未開通的帳號、User 掃 QR 看到的公開資訊（欄位由 shared/publicView.js 決定）。 */
@@ -557,8 +559,10 @@ function locationText(r) {
   return isMoved(r) ? '目前 ' + r['目前位置'] + '（清冊 ' + (r['存放位置'] || '未填') + '）' : (r['存放位置'] || '');
 }
 
-function renderAssetDetail(view, type, rows, managers, pieces, inventory) {
+function renderAssetDetail(view, type, rows, managers, pieces, inventory, cases) {
   const main = rows[0];
+  const openCases = (cases || []).filter(isCaseOpen);
+  const caseHtml = (cases || []).length ? '<div class="card"><h2>異常案件</h2><ul class="list">' + cases.map((c) => caseItemHtml(c, managers, false)).join('') + '</ul></div>' : '';
   const batches = (inventory && inventory.batches) || [];
   const invHtml = batches.map((b) => {
     const r = (inventory.results || {})[b['批次編號']];
@@ -611,18 +615,20 @@ function renderAssetDetail(view, type, rows, managers, pieces, inventory) {
     esc(main['修改時間'] || main['建立時間']) + ' ' + esc(main['修改者'] || main['建立者']) +
     (main['最後匯入批次'] ? '｜匯入批次 ' + esc(main['最後匯入批次']) : '') + '</div></div>' +
     (additions ? '<div class="card"><h2>增值紀錄</h2><ul class="list">' + additions + '</ul></div>' : '') +
-    (type === 'CUSTODY' ? piecesCardHtml(main, pieces || []) : '') +
+    (type === 'CUSTODY' ? piecesCardHtml(main, pieces || []) : '') + caseHtml +
     '<div class="card"><h2>建檔照片</h2><div id="photoBox"><p class="muted">載入中…</p></div>' +
     (can(state.me.role, 'photo.upload') ? photoButtonsHtml() : '') + '<ul class="list" id="upList"></ul></div>' +
     '<div class="card"><h2>管理</h2>' + invHtml + '<div class="row">' +
     (can(state.me.role, 'asset.edit') ? '<button class="primary" id="aEdit">編輯</button>' : '') +
     '<button type="button" id="aInv"' + (batches.length ? '' : ' disabled title="沒有進行中的盤點批次"') + '>盤點</button>' +
     '<button disabled>借出</button><button disabled>歸還</button>' +
+    (can(state.me.role, 'case.open') && assetStatus(main) !== '報廢' ? '<button type="button" id="aCase">登記異常' + (openCases.length ? '（處理中 ' + openCases.length + '）' : '') + '</button>' : '') +
     '<button type="button" id="aQr">顯示 QR</button></div></div>' +
     '<a class="btn" href="#/assets">回資產清單</a>';
   if (type === 'CUSTODY' && $('#pcNew')) $('#pcNew').onclick = () => createPiecesDialog(main, pieces || []);
   $('#aQr').onclick = () => showQrDialog(type, main);
   if (batches.length) $('#aInv').onclick = () => inventoryDialog(type, main, batches, () => viewAsset(view, [ASSET_TYPES[type].qr, assetKey(type, main)]));
+  if ($('#aCase')) $('#aCase').onclick = () => openCaseDialog(type, main, {}, () => viewAsset(view, [ASSET_TYPES[type].qr, assetKey(type, main)]));
   const photoKey = photoAssetKey(type, main);
   loadPhotos(type, photoKey);
   if (can(state.me.role, 'photo.upload')) bindPhotoButtons(type, photoKey);
@@ -933,6 +939,7 @@ function renderAssetList(type, data, ui) {
       '<option value="">建檔照片：不限</option>') +
     sel('fOpen', '開放借用', [{ value: '可借', label: '現在可借' }, { value: '是', label: '開放借用：是' }, { value: '否', label: '開放借用：否' }],
       '<option value="">開放借用：不限</option>') +
+    sel('fCase', '異常案件', [{ value: '處理中', label: '異常案件：處理中' }], '<option value="">異常案件：不限</option>') +
     (data.inventory ? sel('fInv', '盤點', [{ value: '已盤', label: '本次已盤' }, { value: '未盤', label: '本次未盤（範圍內）' }, { value: '自行', label: '自行盤點' },
       { value: '退回', label: '被退回' }, { value: '異常', label: '結果異常' }], '<option value="">盤點（' + esc(data.inventory.batch['名稱']) + '）：不限</option>') : '') +
     '<label class="radio"><input type="checkbox" data-c="已移位"' + (f['已移位'] ? ' checked' : '') + '> 只看實際位置和清冊不同</label>' +
@@ -953,7 +960,8 @@ function renderAssetList(type, data, ui) {
 }
 
 function drawAssetResults(type, data, ui) {
-  const inv = data.inventory ? { results: data.inventory.results, scope: data.invScope || (data.invScope = scopeKeys(type, data.rows, data.inventory.batch)) } : null;
+  const inv = { openCases: data.openCases || {} };
+  if (data.inventory) { inv.results = data.inventory.results; inv.scope = data.invScope || (data.invScope = scopeKeys(type, data.rows, data.inventory.batch)); }
   const list = filterAssets(type, data.rows, ui.f, state.me.email, data.photoCounts, inv);
   if (type === 'ITEM') list.sort((a, b) => compareItemCodes(a['系所編號'], b['系所編號']) || (a['物品ID'] < b['物品ID'] ? -1 : 1));
   const canEdit = can(state.me.role, 'asset.edit');
@@ -978,7 +986,8 @@ function drawAssetResults(type, data, ui) {
       '<a href="#/asset/' + prefix + '/' + encodeURIComponent(assetKey(type, r)) + '"><div><strong>' + title + '</strong></div>' +
       '<div class="meta">' + meta.filter(Boolean).map(esc).join('｜') + '</div>' +
       '<div class="row chips">' + statusChips(r) + (mgr ? '<span class="chip">經管：' + esc(mgr) + '</span>' : '') +
-      (nPhoto ? '<span class="chip">建檔照片 ' + nPhoto + '</span>' : '') + (inv ? inventoryChips(inv.results[assetKey(type, r)]) : '') + '</div></a></li>';
+      (nPhoto ? '<span class="chip">建檔照片 ' + nPhoto + '</span>' : '') + (inv.results ? inventoryChips(inv.results[assetKey(type, r)]) : '') +
+      (inv.openCases[type + ':' + assetKey(type, r)] ? '<span class="chip bad">異常處理中</span>' : '') + '</div></a></li>';
   }).join('');
 
   $('#lResult').innerHTML = '<div class="row spread meta" style="margin:4px 2px 8px"><span>共 ' + list.length + ' 筆' +
@@ -1207,7 +1216,8 @@ async function viewBatch(view, params) {
       '<div class="row chips"><span class="chip ' + (rejected ? 'bad' : r['結果'] === '正常' ? 'ok' : 'warn') + '">' + esc(rejected ? '退回：' + r['退回原因'] : r['結果']) +
       (r['實際數量'] ? ' ' + esc(r['實際數量']) : '') + '</span>' + (r['方式'] === INV_SELF ? '<span class="chip">自行盤點</span>' : '') +
       (photos.length ? '<button type="button" class="small" data-photos="' + esc(photos.join(',')) + '">照片 ' + photos.length + '</button>' : '') +
-      (active && !rejected && isLatest ? '<button type="button" class="small" data-reject="' + esc(r['結果編號']) + '">退回</button>' : '') + '</div></li>';
+      (active && !rejected && isLatest ? '<button type="button" class="small" data-reject="' + esc(r['結果編號']) + '">退回</button>' : '') +
+      (isAbnormal(r) && isLatest && byKey[r['資產鍵']] && can(state.me.role, 'case.open') ? '<button type="button" class="small" data-case="' + esc(r['資產鍵']) + '" data-result="' + esc(r['結果編號']) + '" data-kind="' + esc(r['結果']) + '">登記異常</button>' : '') + '</div></li>';
   }).join('');
   view.innerHTML = '<h1>' + esc(b['名稱']) + '</h1><p class="meta muted">' + esc(ASSET_TYPES[type].label) + '｜範圍 ' + esc(b['範圍說明']) + '｜' + fmtDate(b['開始日']) +
     (b['截止日'] ? ' ～ ' + fmtDate(b['截止日']) : '') + '｜' + esc(b['批次編號']) + '｜' + esc(b['狀態']) + '</p>' +
@@ -1227,6 +1237,11 @@ async function viewBatch(view, params) {
     catch (e) { toast(e.message, true); }
   };
   view.querySelectorAll('[data-photos]').forEach((btn) => { btn.onclick = () => showPhotoIds(btn.dataset.photos.split(',')); });
+  view.querySelectorAll('[data-case]').forEach((btn) => {
+    const kind = { '找不到': '遺失', '損壞': '損壞', '數量不符': '數量短少' }[btn.dataset.kind] || '其他';
+    btn.onclick = () => openCaseDialog(type, byKey[btn.dataset.case], { caseType: kind, source: '盤點', sourceId: btn.dataset.result,
+      description: '盤點結果：' + btn.dataset.kind + '（' + b['名稱'] + '）' }, () => viewBatch(view, params));
+  });
   view.querySelectorAll('[data-reject]').forEach((btn) => {
     btn.onclick = () => {
       const reason = prompt('退回原因（照片不合格、拍錯件等）；退回後這件回到未盤：');
@@ -1317,6 +1332,92 @@ function inventoryDialog(type, row, batches, done) {
       dlg.close();
       toast('已盤點：' + r.result['結果'] + (r.linkedBatch ? '（固定資產批次也已記錄）' : ''));
       if (state.assets) { delete state.assets[type]; if (r.linkedBatch) delete state.assets.FIXED; }
+      done();
+    } catch (e) {
+      ev.target.disabled = false;
+      toast(e.message, true);
+    }
+  };
+}
+
+// ----- 異常案件 -----
+
+function caseItemHtml(c, managers, withAsset) {
+  const open = isCaseOpen(c);
+  const type = c['類型'];
+  const link = withAsset && ASSET_TYPES[type] ? '<a href="#/asset/' + ASSET_TYPES[type].qr + '/' + encodeURIComponent(c['資產鍵']) + '">' + esc(ASSET_TYPES[type].label + ' ' + c['資產鍵']) + '</a>｜' : '';
+  return '<li><div class="row chips"><span class="chip ' + (open ? 'bad' : 'ok') + '">' + esc(c['狀態']) + '</span><strong>' + esc(c['異常類型']) + '</strong>' +
+    (c['來源'] && c['來源'] !== '現場' ? '<span class="chip">' + esc(c['來源']) + '</span>' : '') + '</div>' +
+    '<div class="meta">' + link + esc(c['案件編號']) + '｜' + esc(c['登記時間']) + ' ' + esc(managerLabel(c['登記人'], managers) || c['登記人']) + '</div>' +
+    '<div>' + esc(c['說明']) + '</div>' +
+    (open ? '' : '<div class="meta">結案：' + esc(c['處理結果']) + '｜' + esc(c['結案時間']) + ' ' + esc(managerLabel(c['結案人'], managers) || c['結案人']) +
+      (c['結案說明'] ? '｜' + esc(c['結案說明']) : '') + '</div>') +
+    (open && can(state.me.role, 'case.close') ? '<div class="row" style="margin-top:6px"><button type="button" class="small primary" data-close="' + esc(c['案件編號']) + '" data-v="' + esc(c['版本']) + '">結案</button></div>' : '') + '</li>';
+}
+
+async function viewCases(view) {
+  view.innerHTML = '<h1>異常案件</h1><p class="muted">載入中…</p>';
+  let data;
+  try {
+    data = await api('case.list');
+  } catch (e) {
+    view.innerHTML = '<h1>異常案件</h1><div class="card"><p>' + esc(e.message) + '</p></div>';
+    return;
+  }
+  const open = data.cases.filter(isCaseOpen);
+  const closed = data.cases.filter((c) => !isCaseOpen(c));
+  view.innerHTML = '<h1>異常案件</h1><p class="meta muted">登記：在資產頁或盤點批次頁按「登記異常」，資產會自動停借。' +
+    (can(state.me.role, 'case.close') ? '結案後解除停借（結果為報廢則改報廢）。' : '結案由 Super 執行。') + '</p>' +
+    '<div class="card"><h2>處理中（' + open.length + '）</h2><ul class="list">' + (open.map((c) => caseItemHtml(c, data.managers, true)).join('') || '<li class="muted">沒有處理中的案件。</li>') + '</ul></div>' +
+    (closed.length ? '<details><summary>已結案（' + closed.length + '）</summary><div class="card"><ul class="list">' + closed.map((c) => caseItemHtml(c, data.managers, true)).join('') + '</ul></div></details>' : '');
+  view.querySelectorAll('[data-close]').forEach((btn) => {
+    const c = data.cases.find((x) => x['案件編號'] === btn.dataset.close);
+    btn.onclick = () => closeCaseDialog(c, () => viewCases(view));
+  });
+}
+
+/** 登記異常。preset：{ caseType, description, source, sourceId }。 */
+function openCaseDialog(type, row, preset, done) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  form.innerHTML = '<h2>登記異常：' + esc(assetName(type, row)) + '</h2><div class="meta">' + esc(type === 'CUSTODY' ? row['材料編號'] : type === 'ITEM' ? (row['系所編號'] || row['物品ID']) : row['資產編號']) +
+    '｜目前狀態 ' + esc(assetStatus(row)) + (assetStatus(row) === '在庫' ? '→ 登記後停借' : '') + '</div>' +
+    '<label for="cType">異常類型</label><select id="cType">' + CASE_TYPES.map((t) => '<option' + (t === preset.caseType ? ' selected' : '') + '>' + t + '</option>').join('') + '</select>' +
+    '<label for="cDesc">說明（必填）</label><textarea id="cDesc" rows="3">' + esc(preset.description || '') + '</textarea>' +
+    '<div class="row" style="margin-top:14px;justify-content:flex-end"><button value="cancel" formnovalidate>取消</button><button type="button" class="primary" id="cGo">登記</button></div>';
+  dlg.showModal();
+  $('#cGo').onclick = async (ev) => {
+    if (!$('#cDesc').value.trim()) { toast('請填寫說明', true); return; }
+    ev.target.disabled = true;
+    try {
+      const c = await api('case.open', { type, key: assetKey(type, row), caseType: $('#cType').value, description: $('#cDesc').value, source: preset.source || '現場', sourceId: preset.sourceId || '' });
+      dlg.close();
+      toast('已登記 ' + c['案件編號']);
+      if (state.assets) delete state.assets[type];
+      done();
+    } catch (e) {
+      ev.target.disabled = false;
+      toast(e.message, true);
+    }
+  };
+}
+
+function closeCaseDialog(c, done) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  form.innerHTML = '<h2>結案 ' + esc(c['案件編號']) + '</h2><div class="meta">' + esc(c['異常類型']) + '｜' + esc(c['說明']) + '</div>' +
+    '<label for="cResult">處理結果</label><select id="cResult">' + CASE_RESULTS.map((r) => '<option>' + r + '</option>').join('') + '</select>' +
+    '<p class="meta muted">報廢：資產改為報廢。其他：這件沒有別的處理中案件時，停借改回在庫。</p>' +
+    '<label for="cNote">結案說明</label><textarea id="cNote" rows="2"></textarea>' +
+    '<div class="row" style="margin-top:14px;justify-content:flex-end"><button value="cancel" formnovalidate>取消</button><button type="button" class="primary" id="cClose">結案</button></div>';
+  dlg.showModal();
+  $('#cClose').onclick = async (ev) => {
+    ev.target.disabled = true;
+    try {
+      await api('case.close', { id: c['案件編號'], version: c['版本'], result: $('#cResult').value, note: $('#cNote').value });
+      dlg.close();
+      toast('已結案');
+      if (state.assets) delete state.assets[c['類型']];
       done();
     } catch (e) {
       ev.target.disabled = false;

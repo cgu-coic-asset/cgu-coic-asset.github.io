@@ -29,6 +29,10 @@ function actions_() {
     'inventory.active': { perm: 'inventory.self', handler: inventoryActive_ },
     'inventory.photo': { perm: 'inventory.self', write: true, handler: inventoryPhoto_ },
     'inventory.record': { perm: 'inventory.self', write: true, handler: inventoryRecord_ },
+    // 異常案件：Admin 登記（自動停借）；只有 Super 能結案
+    'case.list': { perm: 'case.open', handler: caseList_ },
+    'case.open': { perm: 'case.open', write: true, handler: caseOpen_ },
+    'case.close': { perm: 'case.close', write: true, handler: caseClose_ },
     'item.create': { perm: 'asset.edit', write: true, handler: itemCreate_ },
     'item.fromCustody': { perm: 'asset.edit', write: true, handler: itemFromCustody_ },
     'item.fromFixed': { perm: 'asset.edit', write: true, handler: itemFromFixed_ },

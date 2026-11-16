@@ -103,8 +103,9 @@ var ASSET_SEARCH_FIELDS = [
 /**
  * 篩選。f：{ q, 狀態, 部門代號, 保管人代號, 位置（實際位置）, 已移位, 開放借用, 經管人, 待確認, 建檔照片（有／缺） }；
  * counts：photoCounts() 的結果（篩建檔照片時需要）。
- * inventory：{ results（latestResults）, scope（{ 鍵: true }，批次範圍內的鍵） }；篩「盤點」時需要，沒有批次時傳 null（未盤為空）。
- * 盤點：'已盤'、'未盤'、'自行'、'退回'、'異常'（本次批次）。
+ * inventory：{ results（latestResults）, scope（{ 鍵: true }，批次範圍內的鍵）, openCases（openCaseCounts） }；
+ * 篩「盤點」時需要 results 與 scope（沒有批次時傳 null，未盤為空）；篩「異常案件」時需要 openCases。
+ * 盤點：'已盤'、'未盤'、'自行'、'退回'、'異常'（本次批次）。異常案件：'處理中'。
  * 經管人：'' 不限、'me' 我經管的、'none' 未指定，其他值為 Email。
  * 固定資產的增值紀錄（增值次數不是 0）不另列，併在主紀錄。
  */
@@ -129,6 +130,10 @@ function filterAssets(type, rows, f, myEmail, counts, inventory) {
       const c = (counts || {})[type + ':' + assetKey(type, r)];
       const has = !!(c && c['建檔']);
       if ((filters['建檔照片'] === '有') !== has) return false;
+    }
+    if (filters['異常案件'] === '處理中') {
+      const n = inventory && inventory.openCases ? inventory.openCases[type + ':' + assetKey(type, r)] : 0;
+      if (!n) return false;
     }
     if (filters['盤點']) {
       const key = assetKey(type, r);
