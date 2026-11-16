@@ -43,6 +43,7 @@ function actions_() {
     'loan.checkout': { perm: 'loan.manage', write: true, handler: loanCheckout_ },
     'loan.return': { perm: 'loan.manage', write: true, handler: loanReturn_ },
     // 借用 B：固定資產借用與送修紀錄（User 限自己名下）
+    'managed.overview': { perm: 'asset.view', handler: managedOverview_ },
     'fixed.records': { perm: 'fixed.record', handler: fixedRecords_ },
     'fixed.add': { perm: 'fixed.record', write: true, handler: fixedRecordAdd_ },
     'fixed.update': { perm: 'fixed.record', write: true, handler: fixedRecordUpdate_ },

@@ -165,6 +165,7 @@ const routes = [
   { re: /^#\/inventory\/([^/]+)$/, view: viewBatch, perm: 'inventory.record' },
   { re: /^#\/cases$/, view: viewCases, perm: 'case.open' },
   { re: /^#\/loans$/, view: viewLoans, perm: 'loan.manage' },
+  { re: /^#\/managed$/, view: viewManaged, perm: 'asset.view' },
   { re: /^#\/fixed\/([^/]+)$/, view: viewFixedRecords, perm: 'fixed.record' },
   { re: /^#\/loans\/([^/]+)$/, view: viewLoan, perm: 'loan.manage' },
   { re: /^#\/loans\/([^/]+)\/print$/, view: viewLoanPrint, perm: 'loan.manage' },
@@ -212,6 +213,7 @@ function viewHome(view) {
       tile('#/assets', '資產清單', '查詢、編輯、經管人', true) +
       tile('#/inventory', '盤點', '批次、進度、未盤清單', true) +
       tile('#/loans', '借用', '申請、借出、歸還', true) +
+      tile('#/managed', '我經管的', '借出、在庫、點數差異', true) +
       tile('#/import', '匯入', '學校清冊 Excel', true) +
       tile('#/public', '可借設備', '公開頁（訪客看到的）', true) +
       tile('#/cases', '異常案件', '登記、Super 結案', true) +
@@ -1901,6 +1903,50 @@ function bindReturn(view, data, outs) {
     }
   };
   draw();
+}
+
+// ----- 我經管的 -----
+
+async function viewManaged(view) {
+  view.innerHTML = '<h1>我經管的</h1><p class="muted">載入中…</p>';
+  let data;
+  try { data = await api('managed.overview'); } catch (e) { view.innerHTML = '<h1>我經管的</h1><div class="card"><p>' + esc(e.message) + '</p></div>'; return; }
+  const onlyIssues = storeGet('asset.managedIssues') === '1';
+  const items = data.items.slice().sort((a, b) => compareItemCodes(a['系所編號'], b['系所編號']));
+  const out = items.filter((r) => r.loan);
+  const overdue = out.filter((r) => r.loan.overdue);
+  const inStock = items.filter((r) => !r.loan && assetStatus(r) === '在庫');
+  const custodyIssues = data.custody.filter((c) => c.summary.issues.length);
+  const fixedOut = data.fixed.filter((f) => f.record);
+  const lastInv = (r) => r['最近盤點日'] ? '盤點 ' + fmtDate(r['最近盤點日']) + ' ' + (r['最近盤點結果'] || '') : '未盤點';
+  const itemLi = (r) => '<li><a href="#/asset/I/' + encodeURIComponent(r['物品ID']) + '" style="color:inherit;text-decoration:none"><strong><span class="code">' +
+    esc(r['系所編號'] || '未編號') + '</span> ' + esc(r['名稱']) + '</strong></a><div class="meta">' +
+    (r.loan ? '<a href="#/loans/' + encodeURIComponent(r.loan.id) + '">' + esc(r.loan.id) + '</a> ' + esc(r.loan.name) + ' ' + esc(r.loan.phone) +
+      '｜借出 ' + esc(r.loan.out) + '｜預計歸還 ' + esc(r.loan.due) + (r.loan.overdue ? ' <span class="chip bad">逾期</span>' : '')
+      : esc(assetStatus(r)) + (r.lastReturn ? '｜上次歸還 ' + esc(r.lastReturn) : '')) + '｜' + esc(lastInv(r)) + '</div></li>';
+  const sum = (n, label, cls) => '<div class="stat"><strong class="' + (cls || '') + '">' + n + '</strong><span>' + label + '</span></div>';
+  const custodyLi = (c) => {
+    const s = c.summary;
+    return '<li><a href="#/asset/C/' + encodeURIComponent(c['保管品鍵']) + '" style="color:inherit;text-decoration:none"><strong>' + esc(assetName('CUSTODY', c)) + '</strong></a>' +
+      '<div class="meta">' + esc(c['材料編號']) + '｜帳面 ' + s.book + '｜已編號 ' + s.numbered + '（借出 ' + s.out + '、在庫 ' + s.inStock + '）｜' +
+      (s.counted === null ? '未點數' : '點數 ' + s.counted + '（' + fmtDate(c['最近盤點日']) + '）') + '</div>' +
+      (s.issues.length ? '<div class="row chips">' + s.issues.map((t) => '<span class="chip warn">' + esc(t) + '</span>').join('') + '</div>' : '') + '</li>';
+  };
+  const fixedLi = (f) => '<li><a href="#/fixed/' + encodeURIComponent(f['資產編號']) + '" style="color:inherit;text-decoration:none"><strong>' + esc(assetName('FIXED', f)) + '</strong></a>' +
+    '<div class="meta">' + esc(f['資產編號']) + '｜' + esc(assetStatus(f)) + (f.record ? '｜' + esc(f.record.event) + ' ' + esc(f.record.who) + ' ' + esc(f.record.from) + ' ～ ' + esc(f.record.to || '') +
+      (f.record.overdue ? ' <span class="chip bad">逾期</span>' : '') : '') + '｜' + esc(lastInv(f)) + '</div></li>';
+  const showItems = onlyIssues ? overdue : items;
+  const showCustody = onlyIssues ? custodyIssues : data.custody;
+  const showFixed = onlyIssues ? data.fixed.filter((f) => f.record && f.record.overdue) : data.fixed;
+  view.innerHTML = '<h1>我經管的</h1><div class="stats">' + sum(items.length, '系所物品') + sum(out.length, '借出中', 'accent') +
+    sum(overdue.length, '逾期', overdue.length ? 'bad' : '') + sum(inStock.length, '在庫') + sum(custodyIssues.length, '保管品有差異', custodyIssues.length ? 'warn' : '') +
+    sum(fixedOut.length, '固定資產借出／送修') + '</div>' +
+    '<label class="radio" style="margin:8px 0"><input type="checkbox" id="mgIssues"' + (onlyIssues ? ' checked' : '') + '> 只看有差異或逾期</label>' +
+    '<div class="card"><h2>系所物品（' + showItems.length + '）</h2><ul class="list">' + (showItems.map(itemLi).join('') || '<li class="muted">沒有</li>') + '</ul></div>' +
+    '<div class="card"><h2>保管品（' + showCustody.length + '）</h2><ul class="list">' + (showCustody.map(custodyLi).join('') || '<li class="muted">沒有</li>') + '</ul></div>' +
+    '<div class="card"><h2>固定資產（' + showFixed.length + '）</h2><ul class="list">' + (showFixed.map(fixedLi).join('') || '<li class="muted">沒有</li>') + '</ul></div>' +
+    '<p class="meta muted">經管人在資產清單指定。系所物品連結的保管品由您經管的也列在這裡。</p>';
+  $('#mgIssues').onchange = () => { storeSet('asset.managedIssues', $('#mgIssues').checked ? '1' : '0'); viewManaged(view); };
 }
 
 // ----- 借用 B：固定資產借用與送修紀錄 -----

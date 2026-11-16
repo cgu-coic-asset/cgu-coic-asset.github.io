@@ -171,3 +171,8 @@ input.qty { width: 5em; display: inline-block; min-height: 32px; padding: 4px 8p
   body { font-size: 12pt; }
 }
 .hp { position: absolute; left: -9999px; width: 1px; height: 1px; overflow: hidden; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+@media (min-width: 560px) { .stats { grid-template-columns: repeat(6, 1fr); } }
+.stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; align-items: center; }
+.stat strong { font-size: 1.4rem; } .stat strong.bad { color: var(--bad); } .stat strong.warn { color: var(--warn); } .stat strong.accent { color: var(--accent); }
+.stat span { font-size: .78rem; color: var(--muted); text-align: center; }
