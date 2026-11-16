@@ -27,6 +27,8 @@ var PERMISSIONS = {
   'loan.apply': [ROLE_GUEST, ROLE_USER, ROLE_ADMIN, ROLE_SUPER],
   'self.view': [ROLE_USER, ROLE_ADMIN, ROLE_SUPER],
   'inventory.self': [ROLE_USER, ROLE_ADMIN, ROLE_SUPER],
+  // 固定資產借用與送修紀錄：User 限自己名下（細部檢查在 FixedRecord.js）
+  'fixed.record': [ROLE_USER, ROLE_ADMIN, ROLE_SUPER],
   'asset.view': [ROLE_ADMIN, ROLE_SUPER],
   'asset.edit': [ROLE_ADMIN, ROLE_SUPER],
   'asset.import': [ROLE_ADMIN, ROLE_SUPER],

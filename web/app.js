@@ -165,6 +165,7 @@ const routes = [
   { re: /^#\/inventory\/([^/]+)$/, view: viewBatch, perm: 'inventory.record' },
   { re: /^#\/cases$/, view: viewCases, perm: 'case.open' },
   { re: /^#\/loans$/, view: viewLoans, perm: 'loan.manage' },
+  { re: /^#\/fixed\/([^/]+)$/, view: viewFixedRecords, perm: 'fixed.record' },
   { re: /^#\/loans\/([^/]+)$/, view: viewLoan, perm: 'loan.manage' },
   { re: /^#\/loans\/([^/]+)\/print$/, view: viewLoanPrint, perm: 'loan.manage' },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'user.manage' },
@@ -467,7 +468,8 @@ async function viewMine(view) {
       return '<li><strong>' + esc(assetName(type, r)) + '</strong><div class="meta">' + lines.filter(Boolean).map(esc).join('｜') +
         '</div><div class="meta">位置：' + esc(currentLocation(r) || '未填') + '｜部門 ' + esc(r['部門代號']) + '｜' + esc(lastCheck) +
         (r['經管人'] ? '｜經管 ' + esc(r['經管人']) : '') + '</div><div class="row chips">' + statusChips(r) + inventoryChips(result) +
-        (canSelf ? '<button type="button" class="small" data-inv="' + esc(key) + '">自行盤點</button>' : '') + '</div></li>';
+        (canSelf ? '<button type="button" class="small" data-inv="' + esc(key) + '">自行盤點</button>' : '') +
+        (type === 'FIXED' ? '<a class="btn small" href="#/fixed/' + encodeURIComponent(key) + '">借用與送修</a>' : '') + '</div></li>';
     }).join('') || '<li class="muted">沒有資料</li>') + '</ul></div>';
     $('#mList').querySelectorAll('[data-inv]').forEach((b) => {
       const r = data[type].find((x) => assetKey(type, x) === b.dataset.inv);
@@ -738,7 +740,7 @@ function renderAssetDetail(view, type, rows, managers, pieces, inventory, cases)
       kv('經管人', esc(managerLabel(main['經管人'], managers))) +
       kv('驗收取得日', fmtDate(main['驗收取得日'])) + kv('耐用年數', esc(main['耐用年數'])) +
       kv('保固期限', fmtDate(main['保固期限'])) + kv('取得價值', esc(main['取得價值'])) +
-      kv('研究計劃編號', esc(main['研究計劃編號'])) + kv('開放借用', esc(main['開放借用'] || '否')) +
+      kv('研究計劃編號', esc(main['研究計劃編號'])) + kv('配件', esc(main['配件'])) + kv('開放借用', esc(main['開放借用'] || '否')) +
       kv('最近盤點', esc(fmtDate(main['最近盤點日']) + ' ' + (main['最近盤點結果'] || ''))) +
       kv('備註', esc(main['備註']));
   } else if (type === 'ITEM') {
@@ -775,7 +777,7 @@ function renderAssetDetail(view, type, rows, managers, pieces, inventory, cases)
     '<div class="card"><h2>管理</h2>' + invHtml + '<div class="row">' +
     (can(state.me.role, 'asset.edit') ? '<button class="primary" id="aEdit">編輯</button>' : '') +
     '<button type="button" id="aInv"' + (batches.length ? '' : ' disabled title="沒有進行中的盤點批次"') + '>盤點</button>' +
-    '<button disabled>借出</button><button disabled>歸還</button>' +
+    (type === 'FIXED' ? '<a class="btn" href="#/fixed/' + encodeURIComponent(main['資產編號']) + '">借用與送修紀錄</a>' : '') +
     (can(state.me.role, 'case.open') && assetStatus(main) !== '報廢' ? '<button type="button" id="aCase">登記異常' + (openCases.length ? '（處理中 ' + openCases.length + '）' : '') + '</button>' : '') +
     '<button type="button" id="aQr">顯示 QR</button></div></div>' +
     '<a class="btn" href="#/assets">回資產清單</a>';
@@ -824,6 +826,7 @@ function editAsset(type, row, managers, done) {
         '<label for="eFix">名稱修正（留空＝用清冊名稱）</label><input id="eFix" value="' + esc(row['名稱修正']) + '" placeholder="' + esc(sourceName(type, row)) + '">' +
         '<label for="eLoc">目前位置（實際放的地方；清冊：' + esc(row['存放位置'] || '未填') + '）</label>' +
         '<input id="eLoc" value="' + esc(row['目前位置']) + '" placeholder="和清冊相同就留空">') +
+    (type === 'FIXED' ? '<label for="eAcc">配件（借用記錄表表頭用）</label><input id="eAcc" value="' + esc(row['配件']) + '">' : '') +
     '<label for="eOpen">開放借用</label><select id="eOpen">' + ASSET_OPEN_VALUES.map((v) =>
       '<option' + (v === (row['開放借用'] || '否') ? ' selected' : '') + '>' + v + '</option>').join('') + '</select>' +
     '<label for="eMgr">經管人（實際負責保管、借用的管理者）</label><select id="eMgr">' +
@@ -841,7 +844,8 @@ function editAsset(type, row, managers, done) {
         type, rowKey: importRowKey(type, row), version: row['版本'], reason: $('#eReason').value,
         changes: Object.assign(
           { 目前位置: $('#eLoc').value, 開放借用: $('#eOpen').value, 經管人: $('#eMgr').value, 備註: $('#eNote').value },
-          isItem ? { 系所編號: $('#eCode').value, 名稱: $('#eName').value, 規格: $('#eSpec').value } : { 名稱修正: $('#eFix').value }),
+          isItem ? { 系所編號: $('#eCode').value, 名稱: $('#eName').value, 規格: $('#eSpec').value } : { 名稱修正: $('#eFix').value },
+          $('#eAcc') ? { 配件: $('#eAcc').value } : {}),
       });
       dlg.close();
       toast('已儲存');
@@ -1897,6 +1901,107 @@ function bindReturn(view, data, outs) {
     }
   };
   draw();
+}
+
+// ----- 借用 B：固定資產借用與送修紀錄 -----
+
+async function viewFixedRecords(view, params) {
+  const key = params[0];
+  view.innerHTML = '<h1>借用與送修紀錄</h1><p class="muted">載入中…</p>';
+  let data;
+  try { data = await api('fixed.records', { key }); } catch (e) {
+    view.innerHTML = '<h1>借用與送修紀錄</h1><div class="card"><p>' + esc(e.message) + '</p></div><a class="btn" href="#/">回首頁</a>';
+    return;
+  }
+  const a = data.asset;
+  const back = can(state.me.role, 'asset.view') ? '#/asset/F/' + encodeURIComponent(a['資產編號']) : '#/mine';
+  const rec = (r) => {
+    const open = r['狀態'] === FR_OPEN;
+    return '<li><div class="row spread"><strong>' + esc(r['事件']) + '（' + esc(r['地點']) + '）' + esc(r['借用部門或廠商']) + '</strong>' +
+      '<span class="chip ' + (open ? 'accent' : 'ok') + '">' + esc(r['狀態']) + '</span></div>' +
+      '<div class="meta">' + esc(r['紀錄編號']) + '｜原因 ' + esc(r['原因']) + '｜' + esc(r['預計開始']) + ' ～ ' + esc(r['預計結束'] || '') +
+      '｜借用人 ' + esc(r['借用人']) + '｜經辦 ' + esc(r['經辦']) + (r['來源'] === FR_SOURCE_LOAN_A ? '｜系所物品借用' : '') + '</div>' +
+      (r['備註'] ? '<div class="meta">' + esc(r['備註']) + '</div>' : '') +
+      (open ? '' : '<div class="meta">歸還 ' + esc(r['歸還日期']) + '｜經辦 ' + esc(r['歸還經辦']) + '｜' + esc(r['歸還狀況']) + (r['歸還說明'] ? '：' + esc(r['歸還說明']) : '') + '</div>') +
+      (open && r['來源'] !== FR_SOURCE_LOAN_A ? '<div class="row" style="margin-top:6px"><button type="button" class="small" data-edit="' + esc(r['紀錄編號']) + '">修改</button>' +
+        '<button type="button" class="small primary" data-ret="' + esc(r['紀錄編號']) + '">歸還／送修回來</button></div>' : '') + '</li>';
+  };
+  view.innerHTML = '<h1>' + esc(a['名稱']) + '</h1><p class="meta muted">' + esc(a['資產編號']) + '｜' + esc(a['廠牌規格'] || '') + '｜保管人 ' + esc(a['保管人'] || '') +
+    (a['配件'] ? '｜配件 ' + esc(a['配件']) : '') + '</p><div class="row" style="margin:-4px 0 10px"><span class="chip">' + esc(a['狀態']) + '</span></div>' +
+    '<div class="card"><div class="row spread"><h2 style="margin:0">借用與送修紀錄</h2>' +
+    (a['狀態'] === '在庫' ? '<span class="row"><button type="button" class="primary" data-new="借用">＋ 借用</button><button type="button" data-new="送修">＋ 送修</button></span>'
+      : '<span class="meta muted">目前' + esc(a['狀態']) + '，在庫才能新增</span>') + '</div>' +
+    '<p class="meta muted">依學校「儀器設備校內/校外借用記錄表」。每次新增、修改都會自動記錄。</p>' +
+    '<ul class="list">' + (data.records.map(rec).join('') || '<li class="muted">還沒有紀錄</li>') + '</ul></div>' +
+    '<a class="btn" href="' + back + '">返回</a>';
+  const reload = () => viewFixedRecords(view, params);
+  view.querySelectorAll('[data-new]').forEach((b) => { b.onclick = () => fixedRecordDialog(a, null, b.dataset.new, reload); });
+  view.querySelectorAll('[data-edit]').forEach((b) => { b.onclick = () => fixedRecordDialog(a, data.records.find((r) => r['紀錄編號'] === b.dataset.edit), null, reload); });
+  view.querySelectorAll('[data-ret]').forEach((b) => { b.onclick = () => fixedReturnDialog(data.records.find((r) => r['紀錄編號'] === b.dataset.ret), reload); });
+}
+
+/** 新增（event）或修改（rec）紀錄。 */
+function fixedRecordDialog(asset, rec, event, done) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  const ev = rec ? rec['事件'] : event;
+  const v = (k) => esc(rec ? rec[k] : '');
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  const opts = (list, cur) => list.map((x) => '<option' + (x === cur ? ' selected' : '') + '>' + x + '</option>').join('');
+  form.innerHTML = '<h2>' + (rec ? '修改' : '新增') + ev + '：' + esc(asset['資產編號']) + '</h2>' +
+    '<label for="frDept">' + (ev === '送修' ? '維修廠商' : '借用部門') + '</label><input id="frDept" value="' + v('借用部門或廠商') + '">' +
+    '<label for="frReason">原因</label><select id="frReason">' + opts(FR_REASONS, rec ? rec['原因'] : (ev === '送修' ? '維修' : '上課')) + '</select>' +
+    '<label for="frPlace">地點</label><select id="frPlace">' + opts(FR_PLACES, rec ? rec['地點'] : (ev === '送修' ? '校外' : '校內')) + '</select>' +
+    '<div class="row"><div class="grow1"><label for="frFrom">預計開始</label><input id="frFrom" type="date" value="' + (rec ? v('預計開始') : today) + '"></div>' +
+    '<div class="grow1"><label for="frTo">預計結束</label><input id="frTo" type="date" value="' + v('預計結束') + '"></div></div>' +
+    '<label for="frWho">' + (ev === '送修' ? '送修聯絡人' : '借用人') + '</label><input id="frWho" value="' + v('借用人') + '">' +
+    '<label for="frBy">經辦</label><input id="frBy" value="' + (rec ? v('經辦') : esc(state.me.name || '')) + '">' +
+    '<label for="frNote">備註</label><input id="frNote" value="' + v('備註') + '">' +
+    '<div id="frErr" class="meta" style="color:var(--bad);margin-top:6px"></div>' +
+    '<div class="row" style="margin-top:12px;justify-content:flex-end"><button value="cancel" formnovalidate>取消</button><button type="button" class="primary" id="frGo">儲存</button></div>';
+  dlg.showModal();
+  $('#frGo').onclick = async (e) => {
+    const fields = { '事件': ev, '借用部門或廠商': $('#frDept').value, '原因': $('#frReason').value, '地點': $('#frPlace').value,
+      '預計開始': $('#frFrom').value, '預計結束': $('#frTo').value, '借用人': $('#frWho').value, '經辦': $('#frBy').value, '備註': $('#frNote').value };
+    const check = validateFixedRecord(fields, !rec);
+    if (check.errors.length) { $('#frErr').innerHTML = check.errors.map(esc).join('<br>'); return; }
+    e.target.disabled = true;
+    try {
+      if (rec) await api('fixed.update', { id: rec['紀錄編號'], version: rec['版本'], changes: fields });
+      else await api('fixed.add', Object.assign({ key: asset['資產編號'] }, fields));
+      dlg.close();
+      toast('已儲存');
+      if (state.assets) delete state.assets.FIXED;
+      done();
+    } catch (err) { e.target.disabled = false; $('#frErr').innerHTML = esc(err.message).replace(/；/g, '<br>'); }
+  };
+}
+
+function fixedReturnDialog(rec, done) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+  form.innerHTML = '<h2>' + esc(rec['事件']) + '歸還：' + esc(rec['紀錄編號']) + '</h2>' +
+    '<label for="frrDate">歸還日期</label><input id="frrDate" type="date" value="' + today + '">' +
+    '<label for="frrBy">經辦</label><input id="frrBy" value="' + esc(state.me.name || '') + '">' +
+    '<label for="frrCond">狀況</label><select id="frrCond">' + FR_CONDITIONS.map((c) => '<option>' + c + '</option>').join('') + '</select>' +
+    '<label for="frrNote">說明（故障必填；故障會自動登記異常案件）</label><input id="frrNote">' +
+    '<div id="frrErr" class="meta" style="color:var(--bad);margin-top:6px"></div>' +
+    '<div class="row" style="margin-top:12px;justify-content:flex-end"><button value="cancel" formnovalidate>取消</button><button type="button" class="primary" id="frrGo">確認歸還</button></div>';
+  dlg.showModal();
+  $('#frrGo').onclick = async (e) => {
+    const fields = { '歸還日期': $('#frrDate').value, '歸還經辦': $('#frrBy').value, '歸還狀況': $('#frrCond').value, '歸還說明': $('#frrNote').value };
+    const check = validateFixedReturn(fields, rec['預計開始']);
+    if (check.errors.length) { $('#frrErr').innerHTML = check.errors.map(esc).join('<br>'); return; }
+    e.target.disabled = true;
+    try {
+      await api('fixed.return', Object.assign({ id: rec['紀錄編號'], version: rec['版本'] }, fields));
+      dlg.close();
+      toast('已歸還');
+      if (state.assets) delete state.assets.FIXED;
+      done();
+    } catch (err) { e.target.disabled = false; $('#frrErr').innerHTML = esc(err.message).replace(/；/g, '<br>'); }
+  };
 }
 
 // ----- 貼紙 -----

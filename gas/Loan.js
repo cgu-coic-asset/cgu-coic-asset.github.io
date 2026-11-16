@@ -315,6 +315,7 @@ function loanCheckout_(payload, actor) {
   fixedChanges.forEach(function (p) {
     const fr = applyChanges(p.fixed, { '狀態': '借出' }, ['狀態'], actor.email, nowText);
     writeRow_(targetSheet_(importTarget_('FIXED')), p.fixed._row, fr.row);
+    addLoanARecord_(p.fixed, loan, p.d, actor, nowText);
     logs.push({ action: '借出', objectType: '固定資產', key: p.fixed['資產編號'], before: fr.before, after: Object.assign({ 借用單: id, 系所物品: p.it['系所編號'] || p.it['物品ID'] }, fr.after) });
   });
   const lr = applyChanges(loan, { '狀態': LOAN_OUT, '借出時間': nowText, '備註': [loan['備註'], payload.note].filter(Boolean).join('；').slice(0, 300) },
@@ -405,12 +406,13 @@ function loanReturn_(payload, actor) {
     Object.assign(it, ir.row);
     logs.push({ action: '歸還', objectType: '系所物品', key: it['物品ID'], before: ir.before,
       after: Object.assign({ 借用單: id, 狀況: l.condition, 照片: l.photoIds.length }, ir.after) });
-    if (it['資產編號']) fixedBack.push({ it: it });
+    if (it['資產編號']) fixedBack.push({ it: it, l: l, d: d });
     if (RETURN_CASE_TYPES[l.condition]) toCase.push({ it: it, l: l, d: d });
   });
   writeAllRows_(dsh, allDetails, []);
   writeAllRows_(ish, items, []);
   fixedBack.forEach(function (p) {
+    closeLoanARecord_(p.d['明細編號'], p.l.condition, p.l.note, actor, nowText);
     const fixed = findAssetRows_('FIXED', p.it['資產編號'])[0];
     if (assetStatus(fixed) !== '借出') return;
     const fr = applyChanges(fixed, { '狀態': '在庫' }, ['狀態'], actor.email, nowText);
