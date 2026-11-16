@@ -196,3 +196,6 @@ input.qty { width: 5em; display: inline-block; min-height: 32px; padding: 4px 8p
   .sc-page:last-child { break-after: auto; page-break-after: auto; }
   .sc-ph img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+/* 操作紀錄：改前／改後並排 */
+.logdiff { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.logdiff pre { margin: 4px 0 0; padding: 6px 8px; background: var(--chip); border-radius: 8px; font-size: .78rem; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow: auto; }

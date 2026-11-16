@@ -7,6 +7,7 @@
  * 異常案件：#/cases（處理中／已結案，Super 結案）；資產頁與批次頁「登記異常」。
  * 借用 A：公開清單選件數 → #/apply 申請 → 借用單（可列印）；#/loan 以單號＋手機查詢重印。
  * 借用管理：#/loans（申請中／借出中／已結束）、#/loans/<單號>（借出核對、照片、簽核單）、#/loans/<單號>/print。
+ * 操作紀錄（Super）：#/logs 或 #/logs/<對象鍵>，依人、日期、資產、動作篩選，匯出 CSV。
  * 資產自主盤點資料表：#/selfcheck 或 #/selfcheck/<批次>，固定資產每件一頁，列印或存 PDF，或匯出 Word（每檔 50 件）。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
@@ -168,6 +169,7 @@ const routes = [
   { re: /^#\/loans$/, view: viewLoans, perm: 'loan.manage' },
   { re: /^#\/managed$/, view: viewManaged, perm: 'asset.view' },
   { re: /^#\/selfcheck(?:\/([^/]+))?$/, view: viewSelfCheck, perm: 'asset.view' },
+  { re: /^#\/logs(?:\/(.+))?$/, view: viewLogs, perm: 'log.view' },
   { re: /^#\/fixed\/([^/]+)$/, view: viewFixedRecords, perm: 'fixed.record' },
   { re: /^#\/loans\/([^/]+)$/, view: viewLoan, perm: 'loan.manage' },
   { re: /^#\/loans\/([^/]+)\/print$/, view: viewLoanPrint, perm: 'loan.manage' },
@@ -227,7 +229,7 @@ function viewHome(view) {
       html += '<h1 style="margin-top:20px">系統（Super）</h1><div class="grid">' +
         tile('#/admins', '帳號', 'Super、Admin、User', true) +
         tile('#/system', '備份與交接', '每月備份、交接包', false) +
-        tile('#/logs', '操作紀錄', '查詢 LOG', false) +
+        tile('#/logs', '操作紀錄', '查詢 LOG、匯出', true) +
         '</div>';
     }
   } else if (role === ROLE_USER) {
@@ -784,7 +786,8 @@ function renderAssetDetail(view, type, rows, managers, pieces, inventory, cases)
     '<button type="button" id="aInv"' + (batches.length ? '' : ' disabled title="沒有進行中的盤點批次"') + '>盤點</button>' +
     (type === 'FIXED' ? '<a class="btn" href="#/fixed/' + encodeURIComponent(main['資產編號']) + '">借用與送修紀錄</a>' : '') +
     (can(state.me.role, 'case.open') && assetStatus(main) !== '報廢' ? '<button type="button" id="aCase">登記異常' + (openCases.length ? '（處理中 ' + openCases.length + '）' : '') + '</button>' : '') +
-    '<button type="button" id="aQr">顯示 QR</button></div></div>' +
+    '<button type="button" id="aQr">顯示 QR</button>' +
+    (can(state.me.role, 'log.view') ? '<a class="btn" href="#/logs/' + encodeURIComponent(assetKey(type, main)) + '">操作紀錄</a>' : '') + '</div></div>' +
     '<a class="btn" href="#/assets">回資產清單</a>';
   if (type === 'CUSTODY' && $('#pcNew')) $('#pcNew').onclick = () => createPiecesDialog(main, pieces || []);
   $('#aQr').onclick = () => showQrDialog(type, main);
@@ -2618,5 +2621,75 @@ async function loadSelfCheckPhotos(myRun, currentRun) {
     }
   };
   await Promise.all([worker(), worker(), worker()]);
+}
+
+// ---------- 操作紀錄（M3-03，Super） ----------
+
+const logFilter = { year: '', from: '', to: '', who: '', key: '', action: '', objectType: '', q: '' };
+
+async function viewLogs(view, params) {
+  if (params[0]) Object.assign(logFilter, { key: params[0], from: '', to: '', who: '', action: '', objectType: '', q: '' });
+  view.innerHTML = '<h1>操作紀錄</h1><p class="muted">載入中…</p>';
+  let data;
+  try { data = await api('log.query', { year: logFilter.year, filter: logFilter }); } catch (e) {
+    view.innerHTML = '<h1>操作紀錄</h1><div class="card"><p>' + esc(e.message) + '</p></div><a class="btn" href="#/">回首頁</a>';
+    return;
+  }
+  logFilter.year = data.year;
+  const opt = (v, label, cur) => '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(label) + '</option>';
+  const years = data.years.indexOf(data.year) === -1 ? [data.year].concat(data.years) : data.years;
+  const pretty = (t) => {
+    if (!t) return '';
+    try { const o = JSON.parse(t); return typeof o === 'object' && o ? Object.keys(o).map((k) => k + '：' + (typeof o[k] === 'object' ? JSON.stringify(o[k]) : o[k])).join('\n') : String(o); }
+    catch (e) { return t; }
+  };
+  const items = data.rows.map((r) => {
+    const before = pretty(r['改前']), after = pretty(r['改後']);
+    return '<li><div class="row spread"><strong>' + esc(r['動作']) + '</strong><span class="meta">' + esc(r['時間']) + '</span></div>' +
+      '<div class="meta">' + esc(r['操作者姓名'] || r['操作者Email']) + (r['操作者姓名'] ? ' ' + esc(r['操作者Email']) : '') + '｜' + esc(r['對象類型']) +
+      (r['對象鍵'] ? ' <a href="#/logs/' + encodeURIComponent(r['對象鍵']) + '">' + esc(r['對象鍵']) + '</a>' : '') + (r['來源'] && r['來源'] !== '網頁' ? '｜' + esc(r['來源']) : '') + '</div>' +
+      (r['原因'] ? '<div class="meta">原因：' + esc(r['原因']) + '</div>' : '') +
+      (before || after ? '<details><summary class="meta">改前／改後</summary><div class="logdiff"><pre>' + esc(before || '（無）') + '</pre><pre>' + esc(after || '（無）') + '</pre></div></details>' : '') + '</li>';
+  }).join('');
+  view.innerHTML = '<h1>操作紀錄</h1><div class="card"><div class="form">' +
+    '<label>年份<select id="lgYear">' + years.map((y) => opt(y, y + ' 年', data.year)).join('') + '</select></label>' +
+    '<label>起日<input type="date" id="lgFrom" value="' + esc(logFilter.from) + '"></label>' +
+    '<label>迄日<input type="date" id="lgTo" value="' + esc(logFilter.to) + '"></label>' +
+    '<label>操作者<input id="lgWho" list="lgWhoList" placeholder="Email 或姓名" value="' + esc(logFilter.who) + '"></label>' +
+    '<datalist id="lgWhoList">' + data.facets.actors.map((a) => '<option value="' + esc(a.email) + '">' + esc(a.name) + '</option>').join('') + '</datalist>' +
+    '<label>資產（對象鍵）<input id="lgKey" placeholder="資產編號、保管品鍵、物品ID、單號…" value="' + esc(logFilter.key) + '"></label>' +
+    '<label>動作<select id="lgAction">' + opt('', '全部', logFilter.action) + data.facets.actions.map((a) => opt(a, a, logFilter.action)).join('') + '</select></label>' +
+    '<label>對象類型<select id="lgType">' + opt('', '全部', logFilter.objectType) + data.facets.objectTypes.map((a) => opt(a, a, logFilter.objectType)).join('') + '</select></label>' +
+    '<label>關鍵字<input id="lgQ" placeholder="任何欄位（含改前、改後、原因）" value="' + esc(logFilter.q) + '"></label>' +
+    '</div><div class="row" style="margin-top:8px"><button type="button" class="primary" id="lgGo">查詢</button><button type="button" id="lgClear">清除條件</button>' +
+    '<button type="button" id="lgCsv"' + (data.total ? '' : ' disabled') + '>匯出 CSV</button></div><div class="meta muted" id="lgMsg"></div></div>' +
+    '<div class="card"><h2>符合 ' + data.total + ' 筆' + (data.total > data.rows.length ? '（顯示最新 ' + data.rows.length + ' 筆，請縮小條件或匯出）' : '') + '</h2>' +
+    '<ul class="list">' + (items || '<li class="muted">沒有符合的紀錄。</li>') + '</ul></div><a class="btn" href="#/">回首頁</a>';
+  const read = () => Object.assign(logFilter, {
+    year: $('#lgYear').value, from: $('#lgFrom').value, to: $('#lgTo').value, who: $('#lgWho').value.trim(), key: $('#lgKey').value.trim(),
+    action: $('#lgAction').value, objectType: $('#lgType').value, q: $('#lgQ').value.trim(),
+  });
+  const go = () => { read(); if (location.hash === '#/logs') viewLogs(view, []); else location.hash = '#/logs'; };
+  $('#lgGo').onclick = go;
+  $('#lgYear').onchange = go;
+  ['#lgWho', '#lgKey', '#lgQ'].forEach((s) => { $(s).onkeydown = (e) => { if (e.key === 'Enter') go(); }; });
+  $('#lgClear').onclick = () => { Object.assign(logFilter, { from: '', to: '', who: '', key: '', action: '', objectType: '', q: '' }); go(); };
+  $('#lgCsv').onclick = async () => {
+    read();
+    $('#lgMsg').textContent = '匯出中…';
+    try {
+      const all = await api('log.query', { year: logFilter.year, filter: logFilter, export: true });
+      const blob = new Blob([logCsv(all.columns, all.rows)], { type: 'text/csv;charset=utf-8' });
+      const d = new Date();
+      const stamp = d.getFullYear() + String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + '-' + String(d.getHours()).padStart(2, '0') + String(d.getMinutes()).padStart(2, '0');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'LOG_' + logFilter.year + '_' + stamp + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+      $('#lgMsg').textContent = '已匯出 ' + all.rows.length + ' 筆' + (all.total > all.rows.length ? '（共 ' + all.total + ' 筆，超過上限只匯出最新的）' : '') + '；改前、改後過長的已截斷，完整內容在試算表。';
+    } catch (e) { $('#lgMsg').textContent = '匯出失敗：' + e.message; }
+  };
 }
 
