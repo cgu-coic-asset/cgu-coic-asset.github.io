@@ -88,10 +88,8 @@ function photoList_(payload) {
     .reverse().map(publicRow_);
 }
 
-/** 讀照片內容（base64）。先用檔案ID，找不到再依路徑與檔名找。 */
-function photoGet_(payload) {
-  const rec = readRows_(photoSheet_()).find(function (r) { return r['照片編號'] === payload.id; });
-  if (!rec) throw new AppError('NOT_FOUND', '找不到這張照片');
+/** 照片紀錄對應的雲端檔案。先用檔案ID，找不到再依路徑與檔名找。 */
+function photoFile_(rec) {
   let file = null;
   try { file = rec['檔案ID'] ? DriveApp.getFileById(rec['檔案ID']) : null; } catch (e) { file = null; }
   if (!file) {
@@ -100,7 +98,32 @@ function photoGet_(payload) {
     file = it && it.hasNext() ? it.next() : null;
   }
   if (!file) throw new AppError('NOT_FOUND', '雲端找不到照片檔（' + rec['雲端路徑'] + '/' + rec['檔名'] + '）');
-  return { id: rec['照片編號'], base64: Utilities.base64Encode(file.getBlob().getBytes()) };
+  return file;
+}
+
+/** 讀照片內容（base64）。 */
+function photoGet_(payload) {
+  const rec = readRows_(photoSheet_()).find(function (r) { return r['照片編號'] === payload.id; });
+  if (!rec) throw new AppError('NOT_FOUND', '找不到這張照片');
+  return { id: rec['照片編號'], base64: Utilities.base64Encode(photoFile_(rec).getBlob().getBytes()) };
+}
+
+/**
+ * 縮圖（清單用）：雲端硬碟產生的縮圖，快取 6 小時；沒有縮圖時退回原圖。
+ * 回傳 { id, base64, mime }。
+ */
+function photoThumb_(rec) {
+  const cache = CacheService.getScriptCache();
+  const cacheKey = 'thumb_' + rec['照片編號'];
+  const cached = cache.get(cacheKey);
+  if (cached) return JSON.parse(cached);
+  const file = photoFile_(rec);
+  let blob = null;
+  try { blob = file.getThumbnail(); } catch (e) { blob = null; }
+  if (!blob) blob = file.getBlob();
+  const out = { id: rec['照片編號'], base64: Utilities.base64Encode(blob.getBytes()), mime: blob.getContentType() || 'image/jpeg' };
+  if (out.base64.length < 90000) cache.put(cacheKey, JSON.stringify(out), 21600);
+  return out;
 }
 
 /** 作廢照片：紀錄改為作廢（不刪檔，NAS 仍保留），寫 LOG。 */

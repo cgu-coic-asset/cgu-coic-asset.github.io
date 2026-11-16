@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { publicLoanStatus, publicAsset, representativePhoto, parseQrText } = require('./publicView.js');
+const { publicLoanStatus, publicAsset, representativePhoto, parseQrText, groupPublicItems } = require('./publicView.js');
 
 const FIXED_ROW = {
   '資產編號': '0343360037', '增值次數': '0', '資產名稱': '筆記型電腦', '名稱修正': '', '廠牌規格': 'ASUS X515',
@@ -86,4 +86,17 @@ test('QR 文字解析：手動輸入編號', () => {
   assert.deepStrictEqual(parseQrText('0343360037'), { type: 'FIXED', key: '0343360037' });
   assert.strictEqual(parseQrText('hello world'), null);
   assert.strictEqual(parseQrText(''), null);
+});
+
+test('可借設備分組：同名稱規格合併、統計可借與借出、取第一張照片、編號排序', () => {
+  const mk = (code, loan, extra) => Object.assign({ type: 'ITEM', name: 'Chromebook', spec: 'Lenovo 100e', code, loan, lendable: loan === '可借用', key: 'I' + code, qr: 'II' + code, photoId: '' }, extra);
+  const groups = groupPublicItems([
+    mk('CB-010', '借出中'), mk('CB-002', '可借用', { photoId: 'P2' }), mk('CB-001', '可借用', { photoId: 'P1' }), mk('CB-003', '暫停借用'),
+    { type: 'ITEM', name: 'HDMI 線', spec: '', code: 'HDMI-001', loan: '可借用', lendable: true, key: 'I9', qr: 'II9', photoId: '' },
+  ]);
+  assert.strictEqual(groups.length, 2);
+  const cb = groups.find((g) => g.name === 'Chromebook');
+  assert.deepStrictEqual([cb.total, cb.lendable, cb.out, cb.photoId], [4, 2, 1, 'P2']);
+  assert.deepStrictEqual(cb.items.map((i) => i.code), ['CB-001', 'CB-002', 'CB-003', 'CB-010']);
+  assert.deepStrictEqual(groupPublicItems([]), []);
 });

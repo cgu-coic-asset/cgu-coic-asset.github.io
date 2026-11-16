@@ -2,6 +2,7 @@
  * 資產管理系統前端。
  * 網址：QR 貼紙為 /?F<資產編號>、/?C<保管品 6 位數 QR碼>、/?I<物品ID>，載入時轉成內部路由 #/asset/F/<編號>。
  * 訪客看公開資訊（public.get）；Admin、Super 看管理頁（asset.get）。站內掃描頁 #/scan 用相機辨識後導到同一路由。
+ * 公開頁 #/public（訪客首頁）：開放借用的系所物品清單（public.list），只有公開欄位與代表照片縮圖。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -153,6 +154,7 @@ const routes = [
   { re: /^#?\/?$/, view: viewHome },
   { re: /^#\/asset\/([FCI])\/(.+)$/, view: viewAsset },
   { re: /^#\/scan$/, view: viewScan },
+  { re: /^#\/public$/, view: viewPublicList },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'user.manage' },
   { re: /^#\/mine$/, view: viewMine, perm: 'self.view' },
   { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
@@ -198,6 +200,7 @@ function viewHome(view) {
       tile('#/inventory', '盤點', '年度與不定期', false) +
       tile('#/loans', '借用', '申請、借出、歸還', false) +
       tile('#/import', '匯入', '學校清冊 Excel', true) +
+      tile('#/public', '可借設備', '公開頁（訪客看到的）', true) +
       tile('#/cases', '異常案件', '登記與處理', false) +
       (hasCodes ? tile('#/mine', '我名下的財產', '保管人代號 ' + me.codes.join('、'), true) : '') +
       (role === ROLE_ADMIN ? tile('#/admins', 'User 帳號', '綁定保管人代號', true) : '') +
@@ -214,13 +217,62 @@ function viewHome(view) {
       tile('#/mine', '我名下的財產', hasCodes ? '保管人代號 ' + me.codes.join('、') : '尚未綁定保管人代號', true) +
       tile('#/mine', '自行盤點', '盤點期間開放', false) +
       tile('#/scan', '掃描 QR', '查看設備資訊', true) +
+      tile('#/public', '可借設備', '公開頁', true) +
       '</div>';
   } else {
-    html += '<h1>可借設備</h1><div class="card"><p class="muted" style="margin:0">設備清單建置中。' +
-      '管理者與保管人請按右上角登入。' + (me.loggedIn ? '<br>您的帳號尚未開通，請聯絡系辦。' : '') + '</p></div>' +
-      '<div class="grid">' + tile('#/scan', '掃描 QR 貼紙', '查看設備資訊', true) + '</div>';
+    view.innerHTML = '';
+    viewPublicList(view, [], me.loggedIn ? '您的帳號尚未開通，請聯絡系辦。' : '管理者與保管人請按右上角登入。');
+    return;
   }
   view.innerHTML = html;
+}
+
+// ----- 可借設備清單（公開頁）-----
+
+/** 免登入的可借設備清單：只有開放借用的系所物品，欄位由 shared/publicView.js 決定。 */
+async function viewPublicList(view, params, note) {
+  view.innerHTML = '<h1>可借設備</h1><p class="muted">載入中…</p>';
+  let data;
+  try {
+    data = await api('public.list');
+  } catch (e) {
+    view.innerHTML = '<h1>可借設備</h1><div class="card"><p>' + esc(e.message) + '</p></div>';
+    return;
+  }
+  const groups = groupPublicItems(data.items);
+  view.innerHTML = '<h1>' + esc(data.unit ? data.unit + ' ' : '') + '可借設備</h1>' +
+    '<p class="meta muted">' + esc(note || '') + (note ? ' ' : '') + '借用請洽系辦；線上申請建置中。</p>' +
+    '<div class="row" style="margin-bottom:12px"><input id="pubQ" class="grow1" type="search" placeholder="搜尋名稱、規格、編號…">' +
+    '<a class="btn" href="#/scan">掃描 QR</a></div><div id="pubList"></div>';
+  const draw = () => {
+    const words = $('#pubQ').value.toLowerCase().split(/\s+/).filter(Boolean);
+    const list = groups.filter((g) => {
+      const text = (g.name + ' ' + g.spec + ' ' + g.items.map((i) => i.code).join(' ')).toLowerCase();
+      return words.every((w) => text.indexOf(w) !== -1);
+    });
+    $('#pubList').innerHTML = list.map((g, i) => {
+      const chip = g.lendable ? '<span class="chip ok">可借 ' + g.lendable + '／共 ' + g.total + '</span>'
+        : '<span class="chip">目前沒有可借（共 ' + g.total + '）</span>';
+      return '<div class="card pub-item">' + (g.photoId ? '<img class="pub-thumb" data-photo="' + esc(g.photoId) + '" alt="">' : '<div class="pub-thumb"></div>') +
+        '<div class="pub-body"><strong>' + esc(g.name) + '</strong>' + (g.spec ? '<div class="meta">' + esc(g.spec) + '</div>' : '') +
+        '<div class="row chips" style="margin-top:4px">' + chip + (g.out ? '<span class="chip accent">借出中 ' + g.out + '</span>' : '') + '</div>' +
+        '<details><summary class="small">編號與狀態</summary><div class="codes">' + g.items.map((it) =>
+          '<a class="chip' + (it.loan === '可借用' ? ' ok' : it.loan === '借出中' ? ' accent' : '') + '" href="#/asset/' + esc(it.qr[0]) + '/' +
+          encodeURIComponent(it.key) + '">' + esc(it.code || '（未編號）') + ' ' + esc(it.loan) + '</a>').join('') + '</div></details></div></div>';
+    }).join('') || '<div class="card"><p class="muted" style="margin:0">' + (groups.length ? '沒有符合的設備。' : '目前沒有開放借用的設備。') + '</p></div>';
+    loadThumbs($('#pubList'));
+  };
+  $('#pubQ').oninput = draw;
+  draw();
+}
+
+/** 依序載入縮圖（一次一張，避免同時打太多請求）。 */
+async function loadThumbs(root) {
+  const imgs = Array.from(root.querySelectorAll('img[data-photo]'));
+  for (const img of imgs) {
+    if (!img.isConnected) return;
+    try { img.src = await photoSrc(img.dataset.photo, 'public.photo', true); } catch (e) { img.remove(); }
+  }
 }
 
 // ----- 我名下的財產 -----
@@ -317,6 +369,29 @@ function loginHint() {
   if (me.role === ROLE_USER) return '<p class="meta muted">保管人請到「<a href="#/mine">我名下的財產</a>」查看完整資料。</p>';
   return '<p class="meta muted">您的帳號尚未開通管理權限，請聯絡系辦。</p>';
 }
+
+/** 在螢幕上顯示這件的 QR（內容與貼紙相同）：手機掃螢幕即可測試，貼紙掉了也能臨時用。 */
+async function showQrDialog(type, row) {
+  const url = labelUrl(state.config.qrBase, type, qrKey(type, row));
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  form.innerHTML = '<h2>' + esc(assetName(type, row)) + '</h2><div class="qrbox" id="qrBox"><p class="muted">產生中…</p></div>' +
+    '<p class="meta center" style="word-break:break-all">' + esc(url) + '</p>' +
+    (type === 'CUSTODY' && !row['QR碼'] ? '<p class="meta muted">這筆保管品還沒有 QR 短碼（匯出貼紙時會自動補），這裡暫用保管品鍵。</p>' : '') +
+    '<div class="row" style="margin-top:12px;justify-content:flex-end"><button value="cancel">關閉</button></div>';
+  dlg.showModal();
+  try {
+    if (!window.qrcode) await loadScript(QRCODE_URL);
+    const qr = qrcode(0, 'M');
+    qr.addData(url);
+    qr.make();
+    $('#qrBox').innerHTML = qr.createSvgTag({ cellSize: 6, margin: 4, scalable: true });
+  } catch (e) {
+    $('#qrBox').innerHTML = '<p>' + esc(e.message) + '</p>';
+  }
+}
+
+const QRCODE_URL = 'https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js';
 
 // ----- 掃描 QR（站內相機）-----
 
@@ -501,9 +576,11 @@ function renderAssetDetail(view, type, rows, managers, pieces) {
     (can(state.me.role, 'photo.upload') ? photoButtonsHtml() : '') + '<ul class="list" id="upList"></ul></div>' +
     '<div class="card"><h2>管理</h2><div class="row">' +
     (can(state.me.role, 'asset.edit') ? '<button class="primary" id="aEdit">編輯</button>' : '') +
-    '<button disabled>盤點</button><button disabled>借出</button><button disabled>歸還</button></div></div>' +
+    '<button disabled>盤點</button><button disabled>借出</button><button disabled>歸還</button>' +
+    '<button type="button" id="aQr">顯示 QR</button></div></div>' +
     '<a class="btn" href="#/assets">回資產清單</a>';
   if (type === 'CUSTODY' && $('#pcNew')) $('#pcNew').onclick = () => createPiecesDialog(main, pieces || []);
+  $('#aQr').onclick = () => showQrDialog(type, main);
   const photoKey = photoAssetKey(type, main);
   loadPhotos(type, photoKey);
   if (can(state.me.role, 'photo.upload')) bindPhotoButtons(type, photoKey);
@@ -697,9 +774,12 @@ async function uploadOne(type, key, file) {
 
 const photoCache = {};
 
-async function photoSrc(id, action) {
-  if (!photoCache[id]) photoCache[id] = api(action || 'photo.get', { id }).then((r) => 'data:image/jpeg;base64,' + r.base64);
-  return photoCache[id];
+async function photoSrc(id, action, thumb) {
+  const k = thumb ? id + ':thumb' : id;
+  if (!photoCache[k]) {
+    photoCache[k] = api(action || 'photo.get', { id, thumb: !!thumb }).then((r) => 'data:' + (r.mime || 'image/jpeg') + ';base64,' + r.base64);
+  }
+  return photoCache[k];
 }
 
 async function loadPhotos(type, key) {

@@ -12,6 +12,7 @@ if (typeof module !== 'undefined' && typeof ASSET_TYPES === 'undefined') {
   var assetName = require('./assetList.js').assetName;
   var assetKey = require('./assetList.js').assetKey;
   var qrKey = require('./assetList.js').qrKey;
+  var compareItemCodes = require('./item.js').compareItemCodes;
 }
 
 /** 公開顯示的借用狀態：可借用／借出中／暫停借用（停借、報廢）／不開放借用。 */
@@ -81,6 +82,27 @@ function parseQrText(text) {
   return null;
 }
 
+/**
+ * 可借設備清單：同名稱＋規格的物品合成一組（例：Chromebook 40 台），統計可借、借出、共幾件。
+ * list：publicAsset() 物件（可附 photoId）。回傳依名稱排序的組，組內依系所編號排序。
+ */
+function groupPublicItems(list) {
+  const groups = {};
+  (list || []).forEach(function (a) {
+    const k = a.name + '\n' + a.spec;
+    const g = groups[k] || (groups[k] = { name: a.name, spec: a.spec, total: 0, lendable: 0, out: 0, photoId: '', items: [] });
+    g.total++;
+    if (a.lendable) g.lendable++;
+    if (a.loan === '借出中') g.out++;
+    if (!g.photoId && a.photoId) g.photoId = a.photoId;
+    g.items.push({ code: a.code, loan: a.loan, key: a.key, qr: a.qr });
+  });
+  return Object.keys(groups).sort(function (a, b) { return a.localeCompare(b, 'zh-Hant'); }).map(function (k) {
+    groups[k].items.sort(function (a, b) { return compareItemCodes(a.code, b.code); });
+    return groups[k];
+  });
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = { publicLoanStatus, publicCode, publicSpec, publicAsset, representativePhoto, parseQrText };
+  module.exports = { publicLoanStatus, publicCode, publicSpec, publicAsset, representativePhoto, parseQrText, groupPublicItems };
 }
