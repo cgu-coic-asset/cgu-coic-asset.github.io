@@ -75,7 +75,22 @@ function loanApply_(payload, actor) {
   writeLog_(actor, '借用申請', '借用單', id, '', {
     借用人: v.data['借用人姓名'], 件數: details.length, 物品: details.map(function (d) { return d['系所內部編號'] || d['資產鍵']; }).join('、'),
   }, '', '網頁');
+  notifyNewLoan_(loan, details, picked);
   return { loan: loanForApplicant(loan, details), unit: setting_('單位名稱') };
+}
+
+/** 新申請寄信給經管人等（失敗只記錄，不影響申請）。 */
+function notifyNewLoan_(loan, details, itemRows) {
+  try {
+    const supers = loadAdmins_().filter(function (a) { return a['狀態'] === '啟用' && normalizeLevel(a['等級']) === ROLE_SUPER; })
+      .map(function (a) { return a['Email']; });
+    const to = loanNotifyRecipients(itemRows, setting_('借用通知信箱'), supers);
+    if (!to.length) return;
+    const mail = loanMailContent(loan, details, setting_('網站網址') || 'https://cgu-coic-asset.github.io/');
+    MailApp.sendEmail({ to: to.join(','), subject: mail.subject, body: mail.body, name: '資產管理系統' });
+  } catch (e) {
+    console.error('借用通知信失敗 ' + loan['借用單號'] + '：' + (e && e.message));
+  }
 }
 
 /** 排程與自動處理用的操作者。 */

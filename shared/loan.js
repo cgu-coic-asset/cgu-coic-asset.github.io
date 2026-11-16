@@ -153,8 +153,40 @@ function applicationAgeDays(loan, today) {
   return normalizeDate(applied) ? daysBetween(applied, today) : -1;
 }
 
+/**
+ * 新申請通知對象：物品的經管人＋設定「借用通知信箱」（逗號、頓號或空白分隔）；都沒有時通知全部 Super。
+ * 回傳去重、轉小寫的 Email 陣列。
+ */
+function loanNotifyRecipients(itemRows, settingText, superEmails) {
+  const out = [];
+  const add = function (e) {
+    const v = String(e || '').trim().toLowerCase();
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) && out.indexOf(v) === -1) out.push(v);
+  };
+  (itemRows || []).forEach(function (r) { add(r['經管人']); });
+  String(settingText || '').split(/[\s,，、;；]+/).forEach(add);
+  if (!out.length) (superEmails || []).forEach(add);
+  return out;
+}
+
+/** 新申請通知信：{ subject, body }（純文字）。不放學號、手機以外的個資到主旨。 */
+function loanMailContent(loan, details, siteUrl) {
+  const lines = [
+    '有一張新的借用申請，請在借出前核對。', '',
+    '借用單號：' + loan['借用單號'],
+    '借用人：' + loan['借用人姓名'] + '（' + loan['學號或職號'] + '，' + loan['系所單位'] + '）',
+    '手機：' + loan['手機'] + '　Email：' + loan['Email'],
+    '用途：' + loan['用途'] + '　地點：' + loan['使用地點'],
+    '預計期間：' + loan['預計借出日'] + ' ～ ' + loan['預計歸還日'], '',
+    '物品（' + details.length + ' 件）：',
+  ].concat(details.map(function (d) { return '・' + (d['系所內部編號'] || d['資產鍵']) + ' ' + d['名稱']; }));
+  if (siteUrl) lines.push('', '系統：' + siteUrl);
+  return { subject: '[借用申請] ' + loan['借用單號'] + ' ' + details.length + ' 件', body: lines.join('\n') };
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
+    loanNotifyRecipients, loanMailContent,
     LOAN_LIMITS, botCheck, rateCheck, isApplicationExpired, applicationAgeDays,
     LOAN_APPLIED, LOAN_OUT, LOAN_RETURNED, LOAN_VOID, LOAN_OPEN_STATES, DETAIL_APPLIED, DETAIL_OUT, DETAIL_RETURNED, DETAIL_VOID,
     LOAN_MAX_ITEMS, LOAN_MAX_DAYS, LOAN_APPLICANT_FIELDS, nextLoanId, isLoanOpen, normalizeDate, daysBetween, validateLoanRequest, loanForApplicant,

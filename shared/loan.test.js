@@ -69,3 +69,16 @@ test('申請中逾期作廢與天數', () => {
   assert.strictEqual(L.applicationAgeDays(loan, '2026-11-04'), 3);
   assert.strictEqual(L.applicationAgeDays({ '狀態': '已歸還' }, '2026-11-04'), -1);
 });
+
+test('通知對象：經管人＋設定信箱；都沒有才通知 Super', () => {
+  assert.deepStrictEqual(L.loanNotifyRecipients([{ '經管人': 'A@x.tw' }, { '經管人': 'a@x.tw' }, { '經管人': '' }], 'b@x.tw、bad', ['s@x.tw']), ['a@x.tw', 'b@x.tw']);
+  assert.deepStrictEqual(L.loanNotifyRecipients([{ '經管人': '' }], '', ['S@x.tw']), ['s@x.tw']);
+  assert.deepStrictEqual(L.loanNotifyRecipients([], '', []), []);
+});
+
+test('通知信內容含單號、借用人、物品', () => {
+  const m = L.loanMailContent({ '借用單號': 'L1', '借用人姓名': '王', '學號或職號': 'B1', '系所單位': '資工', '手機': '09', 'Email': 'w@x', '用途': 'u', '使用地點': 'p', '預計借出日': 'a', '預計歸還日': 'b' },
+    [{ '系所內部編號': 'CB-001', '名稱': 'Chromebook' }], 'https://x/');
+  assert.strictEqual(m.subject, '[借用申請] L1 1 件');
+  assert.ok(m.body.indexOf('CB-001 Chromebook') !== -1 && m.body.indexOf('https://x/') !== -1);
+});
