@@ -4,6 +4,7 @@
 
 if (typeof module !== 'undefined' && typeof ASSET_TYPES === 'undefined') {
   var ASSET_TYPES = require('./types.js').ASSET_TYPES;
+  var matchInventoryFilter = require('./inventory.js').matchInventoryFilter;
 }
 
 /**
@@ -102,10 +103,12 @@ var ASSET_SEARCH_FIELDS = [
 /**
  * 篩選。f：{ q, 狀態, 部門代號, 保管人代號, 位置（實際位置）, 已移位, 開放借用, 經管人, 待確認, 建檔照片（有／缺） }；
  * counts：photoCounts() 的結果（篩建檔照片時需要）。
+ * inventory：{ results（latestResults）, scope（{ 鍵: true }，批次範圍內的鍵） }；篩「盤點」時需要，沒有批次時傳 null（未盤為空）。
+ * 盤點：'已盤'、'未盤'、'自行'、'退回'、'異常'（本次批次）。
  * 經管人：'' 不限、'me' 我經管的、'none' 未指定，其他值為 Email。
  * 固定資產的增值紀錄（增值次數不是 0）不另列，併在主紀錄。
  */
-function filterAssets(type, rows, f, myEmail, counts) {
+function filterAssets(type, rows, f, myEmail, counts, inventory) {
   const filters = f || {};
   const words = String(filters.q || '').toLowerCase().split(/\s+/).filter(Boolean);
   const me = String(myEmail || '').toLowerCase();
@@ -126,6 +129,12 @@ function filterAssets(type, rows, f, myEmail, counts) {
       const c = (counts || {})[type + ':' + assetKey(type, r)];
       const has = !!(c && c['建檔']);
       if ((filters['建檔照片'] === '有') !== has) return false;
+    }
+    if (filters['盤點']) {
+      const key = assetKey(type, r);
+      const result = inventory && inventory.results ? inventory.results[key] : undefined;
+      const inScope = !!(inventory && inventory.scope && inventory.scope[key]);
+      if (!matchInventoryFilter(filters['盤點'], result, inScope)) return false;
     }
     const mgr = String(r['經管人'] || '').toLowerCase();
     if (filters['經管人'] === 'me' && (!me || mgr !== me)) return false;

@@ -145,3 +145,11 @@ table.kv tr + tr th, table.kv tr + tr td { border-top: 1px solid var(--line); }
 .pub-body details { margin-top: 6px; }
 .qrbox { display: flex; justify-content: center; padding: 8px; background: #fff; border-radius: 10px; }
 .qrbox svg { width: min(320px, 70vw); height: auto; }
+.progress { height: 10px; border-radius: 999px; background: var(--chip); overflow: hidden; margin-top: 8px; }
+.progress div { height: 100%; background: var(--ok); }
+.slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 10px; }
+.slot { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.slot-img { width: 100%; aspect-ratio: 1; border: 1px dashed var(--line); border-radius: 10px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--chip); font-size: .85rem; }
+.slot-img img { width: 100%; height: 100%; object-fit: cover; }
+.slot-msg { font-size: .75rem; text-align: center; word-break: break-all; }
+button.small { min-height: 32px; padding: 4px 10px; font-size: .85rem; }

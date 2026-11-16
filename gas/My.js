@@ -20,5 +20,11 @@ function myAssets_(payload, actor) {
         return o;
       });
   };
-  return { codes: codes, FIXED: pick(IMPORT_TARGETS.FIXED), CUSTODY: pick(IMPORT_TARGETS.CUSTODY) };
+  const out = { codes: codes, FIXED: pick(IMPORT_TARGETS.FIXED), CUSTODY: pick(IMPORT_TARGETS.CUSTODY) };
+  // 本次盤點批次與自己名下的結果（只給自己的鍵，結果列不含其他人的資料）
+  out.inventory = {
+    FIXED: inventoryInfo_('FIXED', out.FIXED.map(function (r) { return assetKey('FIXED', r); })),
+    CUSTODY: inventoryInfo_('CUSTODY', out.CUSTODY.map(function (r) { return assetKey('CUSTODY', r); })),
+  };
+  return out;
 }

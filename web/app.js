@@ -3,6 +3,7 @@
  * 網址：QR 貼紙為 /?F<資產編號>、/?C<保管品 6 位數 QR碼>、/?I<物品ID>，載入時轉成內部路由 #/asset/F/<編號>。
  * 訪客看公開資訊（public.get）；Admin、Super 看管理頁（asset.get）。站內掃描頁 #/scan 用相機辨識後導到同一路由。
  * 公開頁 #/public（訪客首頁）：開放借用的系所物品清單（public.list），只有公開欄位與代表照片縮圖。
+ * 盤點：#/inventory 批次清單與建立、#/inventory/<批次> 進度與未盤清單；資產頁「盤點」對話框；User 在「我名下的財產」自行盤點。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -155,6 +156,8 @@ const routes = [
   { re: /^#\/asset\/([FCI])\/(.+)$/, view: viewAsset },
   { re: /^#\/scan$/, view: viewScan },
   { re: /^#\/public$/, view: viewPublicList },
+  { re: /^#\/inventory$/, view: viewInventory, perm: 'inventory.record' },
+  { re: /^#\/inventory\/([^/]+)$/, view: viewBatch, perm: 'inventory.record' },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'user.manage' },
   { re: /^#\/mine$/, view: viewMine, perm: 'self.view' },
   { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
@@ -197,7 +200,7 @@ function viewHome(view) {
     html += '<h1>工作選單</h1><div class="grid">' +
       tile('#/scan', '掃描 QR', '查看、盤點、借出', true) +
       tile('#/assets', '資產清單', '查詢、編輯、經管人', true) +
-      tile('#/inventory', '盤點', '年度與不定期', false) +
+      tile('#/inventory', '盤點', '批次、進度、未盤清單', true) +
       tile('#/loans', '借用', '申請、借出、歸還', false) +
       tile('#/import', '匯入', '學校清冊 Excel', true) +
       tile('#/public', '可借設備', '公開頁（訪客看到的）', true) +
@@ -215,7 +218,7 @@ function viewHome(view) {
   } else if (role === ROLE_USER) {
     html += '<h1>我的財產</h1><div class="grid">' +
       tile('#/mine', '我名下的財產', hasCodes ? '保管人代號 ' + me.codes.join('、') : '尚未綁定保管人代號', true) +
-      tile('#/mine', '自行盤點', '盤點期間開放', false) +
+      tile('#/mine', '自行盤點', '盤點期間在「我名下的財產」操作', true) +
       tile('#/scan', '掃描 QR', '查看設備資訊', true) +
       tile('#/public', '可借設備', '公開頁', true) +
       '</div>';
@@ -299,22 +302,53 @@ async function viewMine(view) {
   view.querySelectorAll('[data-type]').forEach((b) => {
     b.onclick = () => { storeSet('asset.mineType', b.dataset.type); viewMine(view); };
   });
+  const inv = (data.inventory || {})[type];
+  const scope = inv ? scopeKeys(type, data[type], inv.batch) : {};
   const draw = () => {
     const list = filterAssets(type, data[type], { q: $('#mQ').value });
-    $('#mList').innerHTML = '<div class="card"><ul class="list">' + (list.map((r) => {
+    const invNote = inv ? '<div class="card"><strong>盤點中：' + esc(inv.batch['名稱']) + '</strong><div class="meta">範圍 ' + esc(inv.batch['範圍說明']) +
+      (inv.batch['截止日'] ? '｜截止 ' + fmtDate(inv.batch['截止日']) : '') + '｜請對名下每件按「自行盤點」拍照回報；Admin 看照片不合格會退回。</div></div>' : '';
+    $('#mList').innerHTML = invNote + '<div class="card"><ul class="list">' + (list.map((r) => {
       const serial = displaySerial(r);
       const lines = type === 'FIXED'
         ? [assetKey(type, r), r['廠牌規格'], serial.text && (serial.isPurchaseNo ? '請購案號 ' : '序號 ') + serial.text]
         : [r['材料編號'], '帳面 ' + r['帳面數量'] + ' ' + (r['單位'] || '')];
       const lastCheck = r['最近盤點日'] ? '最近盤點 ' + fmtDate(r['最近盤點日']) +
         (type === 'FIXED' ? ' ' + (r['最近盤點結果'] || '') : (r['最近盤點數量'] ? ' 實點 ' + r['最近盤點數量'] : '')) : '尚未盤點';
+      const key = assetKey(type, r);
+      const result = inv ? inv.results[key] : null;
+      const canSelf = inv && scope[key] && inventoryState(result) !== '已盤';
       return '<li><strong>' + esc(assetName(type, r)) + '</strong><div class="meta">' + lines.filter(Boolean).map(esc).join('｜') +
         '</div><div class="meta">位置：' + esc(currentLocation(r) || '未填') + '｜部門 ' + esc(r['部門代號']) + '｜' + esc(lastCheck) +
-        (r['經管人'] ? '｜經管 ' + esc(r['經管人']) : '') + '</div><div class="row chips">' + statusChips(r) + '</div></li>';
+        (r['經管人'] ? '｜經管 ' + esc(r['經管人']) : '') + '</div><div class="row chips">' + statusChips(r) + inventoryChips(result) +
+        (canSelf ? '<button type="button" class="small" data-inv="' + esc(key) + '">自行盤點</button>' : '') + '</div></li>';
     }).join('') || '<li class="muted">沒有資料</li>') + '</ul></div>';
+    $('#mList').querySelectorAll('[data-inv]').forEach((b) => {
+      const r = data[type].find((x) => assetKey(type, x) === b.dataset.inv);
+      b.onclick = () => inventoryDialog(type, r, [inv.batch], () => viewMine(view));
+    });
   };
   $('#mQ').oninput = draw;
   draw();
+}
+
+/** 批次範圍內的資產鍵：{ 鍵: true }（範圍＝清單篩選，和 filterAssets 同一套）。 */
+function scopeKeys(type, rows, batch) {
+  let f = {};
+  try { f = JSON.parse(batch['範圍'] || '{}'); } catch (e) { f = {}; }
+  const out = {};
+  filterAssets(type, rows, f, state.me.email).forEach((r) => { out[assetKey(type, r)] = true; });
+  return out;
+}
+
+/** 本次批次的盤點狀態標籤。 */
+function inventoryChips(result) {
+  const st = inventoryState(result);
+  if (!st) return '';
+  if (st === '退回') return '<span class="chip bad" title="' + esc(result['退回原因'] || '') + '">盤點被退回</span>';
+  return '<span class="chip ' + (isAbnormal(result) ? 'warn' : 'ok') + '">已盤 ' + esc(result['結果']) +
+    (result['實際數量'] ? ' ' + esc(result['實際數量']) : '') + '</span>' +
+    (result['方式'] === INV_SELF ? '<span class="chip">自行盤點</span>' : '');
 }
 
 async function viewAsset(view, params) {
@@ -322,6 +356,7 @@ async function viewAsset(view, params) {
   const key = params[1];
   const label = ASSET_TYPES[type].label;
   if (!can(state.me.role, 'asset.view')) return viewPublicAsset(view, type, key);
+  state.lastAssetKey = params[0] + '/' + key;
   view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1><p class="muted">載入中…</p>';
   let data;
   try {
@@ -331,7 +366,7 @@ async function viewAsset(view, params) {
       '<a class="btn" href="#/assets">回資產清單</a>';
     return;
   }
-  renderAssetDetail(view, type, data.rows, data.managers, data.items);
+  renderAssetDetail(view, type, data.rows, data.managers, data.items, data.inventory);
 }
 
 /** 訪客、尚未開通的帳號、User 掃 QR 看到的公開資訊（欄位由 shared/publicView.js 決定）。 */
@@ -522,8 +557,13 @@ function locationText(r) {
   return isMoved(r) ? '目前 ' + r['目前位置'] + '（清冊 ' + (r['存放位置'] || '未填') + '）' : (r['存放位置'] || '');
 }
 
-function renderAssetDetail(view, type, rows, managers, pieces) {
+function renderAssetDetail(view, type, rows, managers, pieces, inventory) {
   const main = rows[0];
+  const batches = (inventory && inventory.batches) || [];
+  const invHtml = batches.map((b) => {
+    const r = (inventory.results || {})[b['批次編號']];
+    return '<div class="meta">' + esc(b['名稱']) + '：' + (inventoryChips(r) || '<span class="chip warn">未盤</span>') + '</div>';
+  }).join('');
   const serial = displaySerial(main);
   const kv = (k, v) => v && String(v).trim() ? '<tr><th>' + esc(k) + '</th><td>' + v + '</td></tr>' : '';
   const custodian = esc(main['保管人代號']) + ' ' + esc(main['保管人姓名']);
@@ -574,13 +614,15 @@ function renderAssetDetail(view, type, rows, managers, pieces) {
     (type === 'CUSTODY' ? piecesCardHtml(main, pieces || []) : '') +
     '<div class="card"><h2>建檔照片</h2><div id="photoBox"><p class="muted">載入中…</p></div>' +
     (can(state.me.role, 'photo.upload') ? photoButtonsHtml() : '') + '<ul class="list" id="upList"></ul></div>' +
-    '<div class="card"><h2>管理</h2><div class="row">' +
+    '<div class="card"><h2>管理</h2>' + invHtml + '<div class="row">' +
     (can(state.me.role, 'asset.edit') ? '<button class="primary" id="aEdit">編輯</button>' : '') +
-    '<button disabled>盤點</button><button disabled>借出</button><button disabled>歸還</button>' +
+    '<button type="button" id="aInv"' + (batches.length ? '' : ' disabled title="沒有進行中的盤點批次"') + '>盤點</button>' +
+    '<button disabled>借出</button><button disabled>歸還</button>' +
     '<button type="button" id="aQr">顯示 QR</button></div></div>' +
     '<a class="btn" href="#/assets">回資產清單</a>';
   if (type === 'CUSTODY' && $('#pcNew')) $('#pcNew').onclick = () => createPiecesDialog(main, pieces || []);
   $('#aQr').onclick = () => showQrDialog(type, main);
+  if (batches.length) $('#aInv').onclick = () => inventoryDialog(type, main, batches, () => viewAsset(view, [ASSET_TYPES[type].qr, assetKey(type, main)]));
   const photoKey = photoAssetKey(type, main);
   loadPhotos(type, photoKey);
   if (can(state.me.role, 'photo.upload')) bindPhotoButtons(type, photoKey);
@@ -891,6 +933,8 @@ function renderAssetList(type, data, ui) {
       '<option value="">建檔照片：不限</option>') +
     sel('fOpen', '開放借用', [{ value: '可借', label: '現在可借' }, { value: '是', label: '開放借用：是' }, { value: '否', label: '開放借用：否' }],
       '<option value="">開放借用：不限</option>') +
+    (data.inventory ? sel('fInv', '盤點', [{ value: '已盤', label: '本次已盤' }, { value: '未盤', label: '本次未盤（範圍內）' }, { value: '自行', label: '自行盤點' },
+      { value: '退回', label: '被退回' }, { value: '異常', label: '結果異常' }], '<option value="">盤點（' + esc(data.inventory.batch['名稱']) + '）：不限</option>') : '') +
     '<label class="radio"><input type="checkbox" data-c="已移位"' + (f['已移位'] ? ' checked' : '') + '> 只看實際位置和清冊不同</label>' +
     '<label class="radio"><input type="checkbox" data-c="待確認"' + (f['待確認'] ? ' checked' : '') + '> 只看清冊沒有（待確認）</label>' +
     '</div></div><div id="lResult"></div>';
@@ -909,7 +953,8 @@ function renderAssetList(type, data, ui) {
 }
 
 function drawAssetResults(type, data, ui) {
-  const list = filterAssets(type, data.rows, ui.f, state.me.email, data.photoCounts);
+  const inv = data.inventory ? { results: data.inventory.results, scope: data.invScope || (data.invScope = scopeKeys(type, data.rows, data.inventory.batch)) } : null;
+  const list = filterAssets(type, data.rows, ui.f, state.me.email, data.photoCounts, inv);
   if (type === 'ITEM') list.sort((a, b) => compareItemCodes(a['系所編號'], b['系所編號']) || (a['物品ID'] < b['物品ID'] ? -1 : 1));
   const canEdit = can(state.me.role, 'asset.edit');
   const prefix = ASSET_TYPES[type].qr;
@@ -933,7 +978,7 @@ function drawAssetResults(type, data, ui) {
       '<a href="#/asset/' + prefix + '/' + encodeURIComponent(assetKey(type, r)) + '"><div><strong>' + title + '</strong></div>' +
       '<div class="meta">' + meta.filter(Boolean).map(esc).join('｜') + '</div>' +
       '<div class="row chips">' + statusChips(r) + (mgr ? '<span class="chip">經管：' + esc(mgr) + '</span>' : '') +
-      (nPhoto ? '<span class="chip">建檔照片 ' + nPhoto + '</span>' : '') + '</div></a></li>';
+      (nPhoto ? '<span class="chip">建檔照片 ' + nPhoto + '</span>' : '') + (inv ? inventoryChips(inv.results[assetKey(type, r)]) : '') + '</div></a></li>';
   }).join('');
 
   $('#lResult').innerHTML = '<div class="row spread meta" style="margin:4px 2px 8px"><span>共 ' + list.length + ' 筆' +
@@ -1052,6 +1097,231 @@ function drawAssetResults(type, data, ui) {
       if (e.code === 'VERSION_CONFLICT') await loadAssets(type, true).catch(() => {});
     }
     renderAssetList(type, state.assets[type], ui);
+  };
+}
+
+// ----- 盤點 -----
+
+const DEFAULT_BATCH_NAMES = { FIXED: '年度固定資產盤點', CUSTODY: '保管品點數', ITEM: '系所物品盤點' };
+
+async function viewInventory(view) {
+  view.innerHTML = '<h1>盤點</h1><p class="muted">載入中…</p>';
+  let data;
+  try {
+    data = await api('inventory.batches');
+  } catch (e) {
+    view.innerHTML = '<h1>盤點</h1><div class="card"><p>' + esc(e.message) + '</p></div>';
+    return;
+  }
+  const active = data.batches.filter(isBatchActive);
+  const closed = data.batches.filter((b) => !isBatchActive(b));
+  const item = (b) => '<li><a href="#/inventory/' + encodeURIComponent(b['批次編號']) + '"><strong>' + esc(b['名稱']) + '</strong>' +
+    '<div class="meta">' + esc(ASSET_TYPES[b['類型']].label) + '｜範圍 ' + esc(b['範圍說明']) + '｜' + fmtDate(b['開始日']) +
+    (b['截止日'] ? ' ～ ' + fmtDate(b['截止日']) : '') + '｜' + esc(b['批次編號']) + '</div></a></li>';
+  view.innerHTML = '<h1>盤點</h1><div class="row" style="margin-bottom:10px"><button type="button" class="primary" id="bNew">＋ 建立批次</button>' +
+    '<a class="btn" href="#/scan">掃描 QR</a></div>' +
+    '<div class="card"><h2>進行中</h2><ul class="list">' + (active.map(item).join('') || '<li class="muted">沒有進行中的批次。建立批次後，資產頁的「盤點」才會開啟。</li>') + '</ul></div>' +
+    (closed.length ? '<details><summary>已結束（' + closed.length + '）</summary><div class="card"><ul class="list">' + closed.map(item).join('') + '</ul></div></details>' : '');
+  $('#bNew').onclick = () => createBatchDialog(data.managers);
+}
+
+function createBatchDialog(managers) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  const year = new Date().getFullYear();
+  form.innerHTML = '<h2>建立盤點批次</h2>' +
+    '<label for="bType">類型</label><select id="bType">' + Object.keys(ASSET_TYPES).map((t) => '<option value="' + t + '">' + ASSET_TYPES[t].label + '</option>').join('') + '</select>' +
+    '<label for="bName">名稱</label><input id="bName" value="' + year + ' ' + DEFAULT_BATCH_NAMES.FIXED + '">' +
+    '<p class="meta muted">範圍：留空＝全部。範圍只影響「應盤幾件、未盤清單」，範圍外的資產也能盤。</p>' +
+    '<div id="bScope"><p class="meta muted">載入選項…</p></div>' +
+    '<label for="bEnd">截止日（提醒用，不會自動結束）</label><input id="bEnd" type="date">' +
+    '<div class="row" style="margin-top:14px;justify-content:flex-end"><button value="cancel" formnovalidate>取消</button>' +
+    '<button type="button" class="primary" id="bCreate">建立</button></div>';
+  dlg.showModal();
+  const fillScope = async () => {
+    const type = $('#bType').value;
+    if (!$('#bName').value || Object.values(DEFAULT_BATCH_NAMES).some((n) => $('#bName').value.endsWith(n))) $('#bName').value = year + ' ' + DEFAULT_BATCH_NAMES[type];
+    $('#bScope').innerHTML = '<p class="meta muted">載入選項…</p>';
+    let data;
+    try { data = await loadAssets(type); } catch (e) { $('#bScope').innerHTML = '<p>' + esc(e.message) + '</p>'; return; }
+    const opt = (id, field, label, opts) => '<label for="' + id + '">' + label + '</label><select id="' + id + '" data-s="' + field + '"><option value="">不限</option>' +
+      opts.map((o) => '<option value="' + esc(o.value) + '">' + esc(o.label) + '</option>').join('') + '</select>';
+    $('#bScope').innerHTML = opt('sDept', '部門代號', '部門', distinctValues(data.rows, '部門代號')) +
+      opt('sCust', '保管人代號', '保管人', distinctValues(data.rows, '保管人代號')) +
+      opt('sMgr', '經管人', '經管人', [{ value: 'me', label: '我經管的' }].concat(managers.map((m) => ({ value: m.email, label: m.name || m.email })))) +
+      opt('sLoc', '位置', '實際位置', distinctValues(data.rows, '位置'));
+  };
+  $('#bType').onchange = fillScope;
+  fillScope();
+  $('#bCreate').onclick = async (ev) => {
+    const scope = {};
+    form.querySelectorAll('[data-s]').forEach((el) => { if (el.value) scope[el.dataset.s] = el.value; });
+    ev.target.disabled = true;
+    try {
+      const b = await api('inventory.createBatch', { type: $('#bType').value, name: $('#bName').value, scope, endDate: $('#bEnd').value });
+      dlg.close();
+      toast('已建立 ' + b['批次編號']);
+      if (state.assets) delete state.assets[b['類型']];
+      location.hash = '#/inventory/' + encodeURIComponent(b['批次編號']);
+    } catch (e) {
+      ev.target.disabled = false;
+      toast(e.message, true);
+    }
+  };
+}
+
+async function viewBatch(view, params) {
+  const id = params[0];
+  view.innerHTML = '<h1>盤點批次</h1><p class="muted">載入中…</p>';
+  let data, assets;
+  try {
+    data = await api('inventory.batch', { id });
+    assets = await loadAssets(data.batch['類型'], true);
+  } catch (e) {
+    view.innerHTML = '<h1>盤點批次</h1><div class="card"><p>' + esc(e.message) + '</p></div><a class="btn" href="#/inventory">回盤點</a>';
+    return;
+  }
+  const b = data.batch;
+  const type = b['類型'];
+  const prefix = ASSET_TYPES[type].qr;
+  const active = isBatchActive(b);
+  const byKey = {};
+  assets.rows.forEach((r) => { byKey[assetKey(type, r)] = r; });
+  const scope = scopeKeys(type, assets.rows, b);
+  const latest = latestResults(data.results, id);
+  const st = batchStats(Object.keys(scope), latest);
+  const pct = st.total ? Math.round(st.done / st.total * 100) : 0;
+  const name = (k) => { const r = byKey[k]; return r ? assetName(type, r) : '（清單沒有）'; };
+  const link = (k, text) => '<a href="#/asset/' + prefix + '/' + encodeURIComponent(k) + '">' + text + '</a>';
+  const code = (k) => { const r = byKey[k]; return type === 'CUSTODY' && r ? r['材料編號'] : type === 'ITEM' && r ? (r['系所編號'] || k) : k; };
+  const missing = st.missing.map((k) => '<li>' + link(k, '<strong>' + esc(name(k)) + '</strong>') + '<div class="meta">' + esc(code(k)) +
+    (byKey[k] ? '｜' + esc(currentLocation(byKey[k]) || '位置未填') + (byKey[k]['保管人姓名'] ? '｜' + esc(byKey[k]['保管人姓名']) : '') : '') +
+    (inventoryState(latest[k]) === '退回' ? '｜<span class="chip bad">被退回：' + esc(latest[k]['退回原因']) + '</span>' : '') + '</div></li>').join('');
+  const results = data.results.map((r) => {
+    const photos = String(r['照片編號'] || '').split(',').filter(Boolean);
+    const rejected = (r['狀態'] || RESULT_VALID) === RESULT_REJECTED;
+    const isLatest = latest[r['資產鍵']] && latest[r['資產鍵']]['結果編號'] === r['結果編號'];
+    return '<li' + (rejected || !isLatest ? ' style="opacity:.6"' : '') + '>' + link(r['資產鍵'], '<strong>' + esc(name(r['資產鍵'])) + '</strong>') +
+      '<div class="meta">' + esc(code(r['資產鍵'])) + '｜' + esc(r['盤點時間']) + '｜' + esc(managerLabel(r['盤點人'], data.managers) || r['盤點人']) +
+      (r['實際位置'] ? '｜位置 ' + esc(r['實際位置']) : '') + (r['備註'] ? '｜' + esc(r['備註']) : '') + (!isLatest && !rejected ? '｜已被後來的結果取代' : '') + '</div>' +
+      '<div class="row chips"><span class="chip ' + (rejected ? 'bad' : r['結果'] === '正常' ? 'ok' : 'warn') + '">' + esc(rejected ? '退回：' + r['退回原因'] : r['結果']) +
+      (r['實際數量'] ? ' ' + esc(r['實際數量']) : '') + '</span>' + (r['方式'] === INV_SELF ? '<span class="chip">自行盤點</span>' : '') +
+      (photos.length ? '<button type="button" class="small" data-photos="' + esc(photos.join(',')) + '">照片 ' + photos.length + '</button>' : '') +
+      (active && !rejected && isLatest ? '<button type="button" class="small" data-reject="' + esc(r['結果編號']) + '">退回</button>' : '') + '</div></li>';
+  }).join('');
+  view.innerHTML = '<h1>' + esc(b['名稱']) + '</h1><p class="meta muted">' + esc(ASSET_TYPES[type].label) + '｜範圍 ' + esc(b['範圍說明']) + '｜' + fmtDate(b['開始日']) +
+    (b['截止日'] ? ' ～ ' + fmtDate(b['截止日']) : '') + '｜' + esc(b['批次編號']) + '｜' + esc(b['狀態']) + '</p>' +
+    '<div class="card"><div class="row spread"><strong>進度 ' + st.done + '／' + st.total + '（' + pct + '%）</strong>' +
+    '<span class="row">' + (active ? '<a class="btn primary" href="#/scan">掃描 QR 盤點</a><button type="button" id="bClose">結束批次</button>' : '') + '</span></div>' +
+    '<div class="progress"><div style="width:' + pct + '%"></div></div>' +
+    '<div class="row chips" style="margin-top:8px"><span class="chip warn">未盤 ' + st.missing.length + '</span><span class="chip">自行盤點 ' + st.self + '</span>' +
+    '<span class="chip bad">被退回 ' + st.rejected + '</span><span class="chip warn">結果異常 ' + st.abnormal + '</span>' +
+    (st.extra.length ? '<span class="chip">範圍外盤到 ' + st.extra.length + '</span>' : '') + '</div>' +
+    '<p class="meta muted" style="margin:8px 0 0">資產清單可用「盤點」篩選看本次已盤、未盤、自行盤點、被退回、結果異常。</p></div>' +
+    '<div class="card"><h2>未盤（' + st.missing.length + '）</h2><ul class="list">' + (missing || '<li class="muted">範圍內全部盤完。</li>') + '</ul></div>' +
+    '<div class="card"><h2>盤點結果（' + data.results.length + '）</h2><ul class="list">' + (results || '<li class="muted">還沒有結果。</li>') + '</ul></div>' +
+    '<a class="btn" href="#/inventory">回盤點</a>';
+  if ($('#bClose')) $('#bClose').onclick = async () => {
+    if (!confirm('結束「' + b['名稱'] + '」？結束後不能再對這個批次盤點，未盤 ' + st.missing.length + ' 件會保持未盤。')) return;
+    try { await api('inventory.closeBatch', { id, version: b['版本'] }); toast('已結束'); viewBatch(view, params); }
+    catch (e) { toast(e.message, true); }
+  };
+  view.querySelectorAll('[data-photos]').forEach((btn) => { btn.onclick = () => showPhotoIds(btn.dataset.photos.split(',')); });
+  view.querySelectorAll('[data-reject]').forEach((btn) => {
+    btn.onclick = () => {
+      const reason = prompt('退回原因（照片不合格、拍錯件等）；退回後這件回到未盤：');
+      if (!reason || !reason.trim()) return;
+      api('inventory.reject', { resultId: btn.dataset.reject, reason }).then(() => { toast('已退回'); viewBatch(view, params); }).catch((e) => toast(e.message, true));
+    };
+  });
+}
+
+/** 看幾張照片（盤點結果用）。 */
+function showPhotoIds(ids) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  form.innerHTML = ids.map((id, i) => '<img class="photo-full" data-i="' + i + '" alt="照片 ' + (i + 1) + '" style="margin-bottom:8px">').join('') +
+    '<div class="row" style="justify-content:flex-end"><button value="cancel">關閉</button></div>';
+  ids.forEach((id, i) => photoSrc(id).then((src) => { const img = form.querySelector('[data-i="' + i + '"]'); if (img) img.src = src; }).catch(() => {}));
+  dlg.showModal();
+}
+
+/**
+ * 盤點一件：選批次 → 每格一張照片（先上傳成功）→ 結果、數量（保管品）、目前位置、備註 → 送出。
+ * batches：可盤的進行中批次；done：成功後呼叫。
+ */
+function inventoryDialog(type, row, batches, done) {
+  const dlg = $('#dialog');
+  const form = $('#dialogForm');
+  const own = batches.filter((b) => b['類型'] === type);
+  const slots = inventoryPhotoSlots(type, row);
+  const photoIds = slots.map(() => '');
+  const key = assetKey(type, row);
+  const results = INVENTORY_RESULTS[type];
+  form.innerHTML = '<h2>盤點 ' + esc(assetName(type, row)) + '</h2><div class="meta" style="margin-bottom:6px">' + esc(type === 'CUSTODY' ? row['材料編號'] : type === 'ITEM' ? (row['系所編號'] || key) : key) +
+    (type === 'ITEM' && row['資產編號'] ? '｜連結固定資產 ' + esc(row['資產編號']) + '，視同盤點該固定資產（三張照片）' : '') + '</div>' +
+    (own.length > 1 ? '<label for="iBatch">批次</label><select id="iBatch">' + own.map((b) => '<option value="' + esc(b['批次編號']) + '">' + esc(b['名稱']) + '</option>').join('') + '</select>'
+      : own.length ? '<div class="meta">批次：' + esc(own[0]['名稱']) + '<input id="iBatch" type="hidden" value="' + esc(own[0]['批次編號']) + '"></div>'
+        : '<p>沒有這個類型的進行中批次。</p>') +
+    '<div class="slots">' + slots.map((name, i) => '<div class="slot" data-i="' + i + '"><div class="slot-img"><span class="muted">' + esc(name) + '</span></div>' +
+      '<div class="row"><button type="button" class="small primary" data-cam="' + i + '">📷</button><button type="button" class="small" data-lib="' + i + '">🖼</button></div>' +
+      '<div class="meta slot-msg"></div></div>').join('') + '</div>' +
+    '<input id="iFile" type="file" accept="image/*" hidden>' +
+    (type === 'CUSTODY' ? '<label for="iQty">實際數量（帳面 ' + esc(row['帳面數量']) + ' ' + esc(row['單位'] || '') + '）</label><input id="iQty" type="number" inputmode="numeric" min="0" value="' + esc(row['帳面數量']) + '">' : '') +
+    '<label for="iResult">結果</label><select id="iResult">' + results.map((r) => '<option>' + r + '</option>').join('') + '</select>' +
+    '<label for="iLoc">目前位置（實際放的地方；清冊：' + esc(row['存放位置'] || '未填') + '）</label><input id="iLoc" value="' + esc(currentLocation(row)) + '" placeholder="和清冊相同就照填">' +
+    '<label for="iNote">備註</label><input id="iNote">' +
+    '<div class="row" style="margin-top:14px;justify-content:flex-end"><button value="cancel" formnovalidate>取消</button>' +
+    '<button type="button" class="primary" id="iSave"' + (own.length ? '' : ' disabled') + '>送出盤點</button></div>';
+  dlg.showModal();
+  if ($('#iQty')) {
+    $('#iQty').oninput = () => { const s = suggestCustodyResult($('#iQty').value, row['帳面數量']); if (s) $('#iResult').value = s; };
+  }
+  let picking = -1;
+  const fileInput = $('#iFile');
+  form.querySelectorAll('[data-cam]').forEach((b) => { b.onclick = () => { picking = Number(b.dataset.cam); fileInput.setAttribute('capture', 'environment'); fileInput.click(); }; });
+  form.querySelectorAll('[data-lib]').forEach((b) => { b.onclick = () => { picking = Number(b.dataset.lib); fileInput.removeAttribute('capture'); fileInput.click(); }; });
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    fileInput.value = '';
+    if (!file || picking < 0) return;
+    const i = picking;
+    const slot = form.querySelector('.slot[data-i="' + i + '"]');
+    const msg = slot.querySelector('.slot-msg');
+    const img = slot.querySelector('.slot-img');
+    try {
+      msg.textContent = '處理中…';
+      const takenAt = await readExifDate(file);
+      const blob = await compressImage(file);
+      img.innerHTML = '<img src="' + URL.createObjectURL(blob) + '" alt="">';
+      msg.textContent = '上傳中…（' + Math.round(blob.size / 1024) + ' KB）';
+      const rec = await api('inventory.photo', { type, key, batchId: $('#iBatch').value, base64: await blobToBase64(blob), takenAt, originalName: file.name });
+      photoIds[i] = rec['照片編號'];
+      msg.textContent = '✔ ' + rec['檔名'];
+    } catch (e) {
+      photoIds[i] = '';
+      img.innerHTML = '<span class="muted">' + esc(slots[i]) + '</span>';
+      msg.innerHTML = '<span style="color:var(--bad)">✖ ' + esc(e.message) + '</span>';
+    }
+  };
+  $('#iSave').onclick = async (ev) => {
+    const input = { result: $('#iResult').value, photoCount: photoIds.filter(Boolean).length, quantity: $('#iQty') ? $('#iQty').value : '' };
+    const err = validateInventoryInput(type, row, input);
+    if (err) { toast(err, true); return; }
+    ev.target.disabled = true;
+    try {
+      const r = await api('inventory.record', {
+        type, key, batchId: $('#iBatch').value, result: input.result, quantity: input.quantity,
+        location: $('#iLoc').value, note: $('#iNote').value, photoIds: photoIds.filter(Boolean),
+      });
+      dlg.close();
+      toast('已盤點：' + r.result['結果'] + (r.linkedBatch ? '（固定資產批次也已記錄）' : ''));
+      if (state.assets) { delete state.assets[type]; if (r.linkedBatch) delete state.assets.FIXED; }
+      done();
+    } catch (e) {
+      ev.target.disabled = false;
+      toast(e.message, true);
+    }
   };
 }
 
