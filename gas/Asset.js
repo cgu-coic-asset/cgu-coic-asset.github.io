@@ -25,16 +25,26 @@ function assetList_(payload) {
   return out;
 }
 
-/** 固定資產回傳同一資產編號的所有紀錄（含增值）；保管品回傳一筆。 */
-function assetGet_(payload) {
-  const t = importTarget_(payload.type);
-  const key = String(payload.key || '');
-  // 保管品貼紙的 QR 用 6 位數短碼
-  const field = payload.type === 'CUSTODY' && /^\d{6}$/.test(key) ? 'QR碼' : ASSET_TYPES[payload.type].keyField;
-  let rows = readRows_(schemaSheet_(t.book, t.sheet)).filter(function (r) { return r[field] === key; });
+/**
+ * 依 QR 或輸入的鍵找資產（原始列，含 _row），固定資產含增值紀錄並依增值次數排序。
+ * 保管品接受 6 位數 QR碼 或保管品鍵；系所物品接受物品ID 或系所編號（CB-001）。找不到丟 NOT_FOUND。
+ */
+function findAssetRows_(type, key) {
+  const t = importTarget_(type);
+  key = String(key || '');
+  let field = ASSET_TYPES[type].keyField;
+  if (type === 'CUSTODY' && /^\d{6}$/.test(key)) field = 'QR碼';
+  if (type === 'ITEM' && !/^I\d+$/.test(key)) field = '系所編號';
+  const rows = readRows_(schemaSheet_(t.book, t.sheet)).filter(function (r) { return r[field] === key; });
   if (!rows.length) throw new AppError('NOT_FOUND', '找不到 ' + key);
   rows.sort(function (a, b) { return Number(a['增值次數'] || 0) - Number(b['增值次數'] || 0); });
-  rows = rows.map(publicRow_);
+  return rows;
+}
+
+/** 固定資產回傳同一資產編號的所有紀錄（含增值）；保管品回傳一筆。 */
+function assetGet_(payload) {
+  let rows = findAssetRows_(payload.type, payload.key).map(publicRow_);
+  const key = rows[0][ASSET_TYPES[payload.type].keyField];
   const out = { managers: activeManagers_() };
   if (payload.type === 'ITEM') rows = joinItemsWithCustody_(rows);
   if (payload.type === 'CUSTODY') out.items = joinItemsWithCustody_(itemsOfCustody_(rows[0]['保管品鍵']));

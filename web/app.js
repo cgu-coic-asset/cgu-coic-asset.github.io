@@ -1,6 +1,7 @@
 /**
  * 資產管理系統前端。
  * 網址：QR 貼紙為 /?F<資產編號>、/?C<保管品 6 位數 QR碼>、/?I<物品ID>，載入時轉成內部路由 #/asset/F/<編號>。
+ * 訪客看公開資訊（public.get）；Admin、Super 看管理頁（asset.get）。站內掃描頁 #/scan 用相機辨識後導到同一路由。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
  */
 
@@ -151,6 +152,7 @@ function routeFromQr() {
 const routes = [
   { re: /^#?\/?$/, view: viewHome },
   { re: /^#\/asset\/([FCI])\/(.+)$/, view: viewAsset },
+  { re: /^#\/scan$/, view: viewScan },
   { re: /^#\/admins$/, view: viewAdmins, perm: 'user.manage' },
   { re: /^#\/mine$/, view: viewMine, perm: 'self.view' },
   { re: /^#\/import$/, view: viewImport, perm: 'asset.import' },
@@ -158,6 +160,7 @@ const routes = [
 ];
 
 function render() {
+  stopScanner();
   const hash = location.hash || '#/';
   const view = $('#view');
   for (const r of routes) {
@@ -190,7 +193,7 @@ function viewHome(view) {
   let html = '';
   if (can(role, 'asset.view')) {
     html += '<h1>工作選單</h1><div class="grid">' +
-      tile('#/scan', '掃描 QR', '盤點、借出、歸還', false) +
+      tile('#/scan', '掃描 QR', '查看、盤點、借出', true) +
       tile('#/assets', '資產清單', '查詢、編輯、經管人', true) +
       tile('#/inventory', '盤點', '年度與不定期', false) +
       tile('#/loans', '借用', '申請、借出、歸還', false) +
@@ -210,10 +213,12 @@ function viewHome(view) {
     html += '<h1>我的財產</h1><div class="grid">' +
       tile('#/mine', '我名下的財產', hasCodes ? '保管人代號 ' + me.codes.join('、') : '尚未綁定保管人代號', true) +
       tile('#/mine', '自行盤點', '盤點期間開放', false) +
+      tile('#/scan', '掃描 QR', '查看設備資訊', true) +
       '</div>';
   } else {
     html += '<h1>可借設備</h1><div class="card"><p class="muted" style="margin:0">設備清單建置中。' +
-      '管理者與保管人請按右上角登入。' + (me.loggedIn ? '<br>您的帳號尚未開通，請聯絡系辦。' : '') + '</p></div>';
+      '管理者與保管人請按右上角登入。' + (me.loggedIn ? '<br>您的帳號尚未開通，請聯絡系辦。' : '') + '</p></div>' +
+      '<div class="grid">' + tile('#/scan', '掃描 QR 貼紙', '查看設備資訊', true) + '</div>';
   }
   view.innerHTML = html;
 }
@@ -264,12 +269,7 @@ async function viewAsset(view, params) {
   const type = typeFromQr(params[0]);
   const key = params[1];
   const label = ASSET_TYPES[type].label;
-  if (!can(state.me.role, 'asset.view')) {
-    view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1>' +
-      '<div class="card"><p class="muted" style="margin:0">公開資訊（名稱、照片、可否借用）建置中。</p></div>' +
-      '<a class="btn" href="#/">回首頁</a>';
-    return;
-  }
+  if (!can(state.me.role, 'asset.view')) return viewPublicAsset(view, type, key);
   view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1><p class="muted">載入中…</p>';
   let data;
   try {
@@ -280,6 +280,146 @@ async function viewAsset(view, params) {
     return;
   }
   renderAssetDetail(view, type, data.rows, data.managers, data.items);
+}
+
+/** 訪客、尚未開通的帳號、User 掃 QR 看到的公開資訊（欄位由 shared/publicView.js 決定）。 */
+async function viewPublicAsset(view, type, key) {
+  const label = ASSET_TYPES[type].label;
+  view.innerHTML = '<h1>' + esc(label) + '</h1><p class="muted">載入中…</p>';
+  let data;
+  try {
+    data = await api('public.get', { type, key });
+  } catch (e) {
+    view.innerHTML = '<h1>' + esc(label) + '</h1><div class="card"><p>' +
+      esc(e.code === 'NOT_FOUND' ? '找不到這個編號，請確認 QR 貼紙是否正確。' : e.message) + '</p></div>' +
+      loginHint() + '<a class="btn" href="#/">回首頁</a>';
+    return;
+  }
+  const a = data.asset;
+  const kv = (k, v) => v && String(v).trim() ? '<tr><th>' + esc(k) + '</th><td>' + v + '</td></tr>' : '';
+  const chip = a.lendable ? 'ok' : a.loan === '借出中' ? 'accent' : '';
+  view.innerHTML = '<h1>' + esc(a.name) + '</h1><div class="row" style="margin:-4px 0 10px"><span class="chip ' + chip + '">' +
+    esc(a.loan) + '</span></div><div class="card">' +
+    (data.photoId ? '<img class="photo-full" id="pubPhoto" alt="代表照片" style="margin-bottom:10px">' : '') +
+    '<table class="kv">' + kv('類型', esc(a.label)) + kv('編號', '<strong>' + esc(a.code || '（未編號）') + '</strong>') +
+    kv('規格', esc(a.spec)) + kv('單位', esc(data.unit)) + '</table></div>' +
+    (a.lendable ? '<div class="card"><p style="margin:0">這件設備開放借用。線上借用申請建置中，請洽系辦。</p></div>' : '') +
+    loginHint() + '<div class="row"><a class="btn" href="#/scan">再掃一件</a><a class="btn" href="#/">回首頁</a></div>';
+  if (data.photoId) {
+    photoSrc(data.photoId, 'public.photo').then((src) => { const img = $('#pubPhoto'); if (img) img.src = src; })
+      .catch(() => { const img = $('#pubPhoto'); if (img) img.remove(); });
+  }
+}
+
+function loginHint() {
+  const me = state.me;
+  if (!me.loggedIn) return '<p class="meta muted">管理者請按右上角登入，登入後會直接進入這件的管理頁。</p>';
+  if (me.role === ROLE_USER) return '<p class="meta muted">保管人請到「<a href="#/mine">我名下的財產</a>」查看完整資料。</p>';
+  return '<p class="meta muted">您的帳號尚未開通管理權限，請聯絡系辦。</p>';
+}
+
+// ----- 掃描 QR（站內相機）-----
+
+const JSQR_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';
+let scanner = null;
+
+function stopScanner() {
+  if (!scanner) return;
+  scanner.stopped = true;
+  if (scanner.stream) scanner.stream.getTracks().forEach((t) => t.stop());
+  scanner = null;
+}
+
+/** 掃到或輸入的文字 → 資產頁；看不懂回傳 false。 */
+function gotoQr(text, manual) {
+  const p = parseQrText(text);
+  if (!p) {
+    toast(manual ? '看不懂這個編號' : '這不是本系統的 QR 貼紙', true);
+    return false;
+  }
+  location.hash = '#/asset/' + ASSET_TYPES[p.type].qr + '/' + encodeURIComponent(p.key);
+  return true;
+}
+
+function viewScan(view) {
+  view.innerHTML = '<h1>掃描 QR 貼紙</h1>' +
+    '<div class="card"><div class="scanbox"><video id="scanVideo" playsinline muted autoplay></video><div class="scanframe"></div></div>' +
+    '<p class="meta muted" id="scanMsg" style="margin:8px 0 0">正在開啟相機…</p></div>' +
+    '<div class="card"><h2>或輸入編號</h2><form id="scanForm" class="row">' +
+    '<input id="scanInput" class="grow1" placeholder="資產編號、保管品 QR碼、系所編號（CB-001）" autocomplete="off" autocapitalize="characters">' +
+    '<button class="primary" type="submit">查詢</button></form></div>' +
+    '<a class="btn" href="#/">回首頁</a>';
+  $('#scanForm').onsubmit = (ev) => { ev.preventDefault(); gotoQr($('#scanInput').value, true); };
+  startScanner($('#scanVideo'), $('#scanMsg'));
+}
+
+/** 開後鏡頭連續辨識：有 BarcodeDetector（Android Chrome）直接用，否則載入 jsQR（iPhone Safari）。 */
+async function startScanner(video, msg) {
+  stopScanner();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    msg.textContent = '這個瀏覽器不支援相機，請用手機相機 App 掃描，或在下方輸入編號。';
+    return;
+  }
+  const s = { stopped: false, stream: null };
+  scanner = s;
+  try {
+    s.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false,
+    });
+  } catch (e) {
+    if (scanner === s) scanner = null;
+    msg.textContent = '無法開啟相機（' + (e.name === 'NotAllowedError' ? '沒有允許使用相機' : e.message) +
+      '）。請用手機相機 App 掃描，或在下方輸入編號。';
+    return;
+  }
+  if (s.stopped) { s.stream.getTracks().forEach((t) => t.stop()); return; }
+  video.srcObject = s.stream;
+  try { await video.play(); } catch (e) { /* 使用者已離開 */ }
+
+  let detect = null;
+  if (window.BarcodeDetector) {
+    try {
+      const formats = await BarcodeDetector.getSupportedFormats();
+      if (formats.indexOf('qr_code') !== -1) {
+        const d = new BarcodeDetector({ formats: ['qr_code'] });
+        detect = async () => { const r = await d.detect(video); return r.length ? r[0].rawValue : ''; };
+      }
+    } catch (e) { detect = null; }
+  }
+  if (!detect) {
+    try { if (!window.jsQR) await loadScript(JSQR_URL); } catch (e) { msg.textContent = '無法載入掃描元件，請在下方輸入編號。'; return; }
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    detect = async () => {
+      if (!video.videoWidth) return '';
+      const scale = Math.min(1, 640 / video.videoWidth);
+      canvas.width = Math.round(video.videoWidth * scale);
+      canvas.height = Math.round(video.videoHeight * scale);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
+      return r ? r.data : '';
+    };
+  }
+  if (s.stopped) return;
+  msg.textContent = '對準貼紙上的 QR Code。';
+  const tick = async () => {
+    if (s.stopped) return;
+    let text = '';
+    try { text = await detect(); } catch (e) { text = ''; }
+    if (s.stopped) return;
+    if (text) {
+      if (parseQrText(text)) {
+        stopScanner();
+        if (navigator.vibrate) navigator.vibrate(80);
+        gotoQr(text);
+        return;
+      }
+      msg.textContent = '這不是本系統的 QR 貼紙：' + text.slice(0, 60);
+    }
+    setTimeout(tick, 150);
+  };
+  tick();
 }
 
 function fmtDate(v) {
@@ -557,8 +697,8 @@ async function uploadOne(type, key, file) {
 
 const photoCache = {};
 
-async function photoSrc(id) {
-  if (!photoCache[id]) photoCache[id] = api('photo.get', { id }).then((r) => 'data:image/jpeg;base64,' + r.base64);
+async function photoSrc(id, action) {
+  if (!photoCache[id]) photoCache[id] = api(action || 'photo.get', { id }).then((r) => 'data:image/jpeg;base64,' + r.base64);
   return photoCache[id];
 }
 
@@ -1070,7 +1210,7 @@ function loadScript(url) {
     const el = document.createElement('script');
     el.src = url;
     el.onload = resolve;
-    el.onerror = () => reject(new Error('無法載入 Excel 讀取元件，請確認網路後再試'));
+    el.onerror = () => reject(new Error('無法載入程式元件，請確認網路後再試'));
     document.head.appendChild(el);
   });
 }

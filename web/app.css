@@ -134,3 +134,8 @@ table.kv tr + tr th, table.kv tr + tr td { border-top: 1px solid var(--line); }
 .code { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--text); color: var(--bg); font-size: .85rem; font-weight: 700; }
 .codes { display: flex; flex-wrap: wrap; gap: 4px; max-height: 220px; overflow-y: auto; }
 .codes .chip { text-decoration: none; }
+
+.scanbox { position: relative; width: 100%; aspect-ratio: 4 / 3; max-height: 60vh; background: #000; border-radius: 10px; overflow: hidden; }
+.scanbox video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scanframe { position: absolute; inset: 15% 20%; border: 2px solid rgba(255, 255, 255, .85); border-radius: 12px; pointer-events: none; }
+.grow1 { flex: 1; min-width: 0; }

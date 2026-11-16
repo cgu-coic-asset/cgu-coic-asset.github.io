@@ -16,6 +16,9 @@ function actions_() {
     'admin.add': { perm: 'user.manage', write: true, handler: adminAdd_ },
     'admin.update': { perm: 'user.manage', write: true, handler: adminUpdate_ },
     'my.assets': { perm: 'self.view', handler: myAssets_ },
+    // 公開資訊（訪客掃 QR）：只回傳 shared/publicView.js 定義的欄位
+    'public.get': { perm: 'public.view', handler: publicGet_ },
+    'public.photo': { perm: 'public.view', handler: publicPhoto_ },
     'item.create': { perm: 'asset.edit', write: true, handler: itemCreate_ },
     'item.fromCustody': { perm: 'asset.edit', write: true, handler: itemFromCustody_ },
     'item.fromFixed': { perm: 'asset.edit', write: true, handler: itemFromFixed_ },
