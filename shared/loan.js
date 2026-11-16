@@ -211,8 +211,43 @@ function checkoutErrors(details, lines) {
   return errors;
 }
 
+var RETURN_MIN_PHOTOS = 2;
+/** 歸還狀況；損壞、缺件會自動登記異常案件（來源：借還）。 */
+var RETURN_CONDITIONS = ['正常', '損壞', '缺件', '其他'];
+var RETURN_CASE_TYPES = { '損壞': '損壞', '缺件': '數量短少' };
+
+/**
+ * 歸還檢查（可分批）。outDetails：這張單借出中的明細；lines：[{ detailId, verified, photoCount, condition, note }]。
+ * 回傳錯誤訊息陣列。
+ */
+function returnErrors(outDetails, lines) {
+  const errors = [];
+  const byId = {};
+  (outDetails || []).forEach(function (d) { byId[d['明細編號']] = d; });
+  const seen = {};
+  (lines || []).forEach(function (l) {
+    const d = byId[l.detailId];
+    if (!d) { errors.push((l.detailId || '？') + '：不在這張單的借出中物品（還錯件或已歸還）'); return; }
+    const label = d['系所內部編號'] || d['資產鍵'];
+    if (seen[l.detailId]) errors.push(label + '：重複');
+    seen[l.detailId] = true;
+    if (!l.verified) errors.push(label + '：尚未核對實物（掃 QR 或勾選）');
+    if ((l.photoCount || 0) < RETURN_MIN_PHOTOS) errors.push(label + '：歸還照片至少 ' + RETURN_MIN_PHOTOS + ' 張');
+    if (RETURN_CONDITIONS.indexOf(l.condition) === -1) errors.push(label + '：請選歸還狀況');
+    if (l.condition && l.condition !== '正常' && !String(l.note || '').trim()) errors.push(label + '：狀況不是正常，請填說明');
+  });
+  if (!(lines || []).length) errors.push('請至少勾選一件歸還');
+  return errors;
+}
+
+/** 歸還後物品狀態：還有處理中的異常案件→停借，否則在庫。 */
+function statusAfterReturn(openCaseCount) {
+  return (openCaseCount || 0) > 0 ? '停借' : '在庫';
+}
+
 if (typeof module !== 'undefined') {
   module.exports = {
+    RETURN_MIN_PHOTOS, RETURN_CONDITIONS, RETURN_CASE_TYPES, returnErrors, statusAfterReturn,
     CHECKOUT_MIN_PHOTOS, checkoutErrors,
     loanNotifyRecipients, loanMailContent,
     LOAN_LIMITS, botCheck, rateCheck, isApplicationExpired, applicationAgeDays,

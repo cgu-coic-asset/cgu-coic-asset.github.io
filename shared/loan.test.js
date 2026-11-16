@@ -94,3 +94,14 @@ test('借出檢查：每筆都要處理、核對、兩張照片；不借的略�
   assert.ok(L.checkoutErrors(details, [{ detailId: 'D1', itemId: 'I1', verified: true, photoCount: 2 }, { detailId: 'D2', itemId: 'I1', verified: true, photoCount: 2 }])
     .indexOf('CB-002：同一件物品重複') !== -1);
 });
+
+test('歸還檢查：可分批、還錯件擋、照片、狀況與說明', () => {
+  const out = [{ '明細編號': 'D1', '系所內部編號': 'CB-001' }, { '明細編號': 'D2', '系所內部編號': 'CB-002' }];
+  assert.deepStrictEqual(L.returnErrors(out, [{ detailId: 'D1', verified: true, photoCount: 2, condition: '正常' }]), []);
+  assert.deepStrictEqual(L.returnErrors(out, [{ detailId: 'D9', verified: true, photoCount: 2, condition: '正常' }]), ['D9：不在這張單的借出中物品（還錯件或已歸還）']);
+  assert.deepStrictEqual(L.returnErrors(out, [{ detailId: 'D2', verified: false, photoCount: 1, condition: '損壞', note: '' }]),
+    ['CB-002：尚未核對實物（掃 QR 或勾選）', 'CB-002：歸還照片至少 2 張', 'CB-002：狀況不是正常，請填說明']);
+  assert.deepStrictEqual(L.returnErrors(out, []), ['請至少勾選一件歸還']);
+  assert.strictEqual(L.statusAfterReturn(0), '在庫');
+  assert.strictEqual(L.statusAfterReturn(1), '停借');
+});

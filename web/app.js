@@ -1646,7 +1646,14 @@ function renderLoan(view, data) {
       (d['申請物品'] ? '｜換件（原申請 ' + esc(d['申請物品']) + '）' : '') + (d['歸還時間'] ? '｜歸還 ' + esc(d['歸還時間']) : '') + (d['備註'] ? '｜' + esc(d['備註']) : '') + '</div>' +
       (d.photos.length ? '<button type="button" class="small" data-photos="' + esc(d.photos.map((p) => p.id).join(',')) + '">照片 ' + d.photos.length + '</button>' : '') + '</li>').join('');
     const scans = String(l['簽核單'] || '').split(',').filter(Boolean);
-    view.innerHTML = head + '<div class="card"><h2>物品</h2><ul class="list">' + rows + '</ul></div>' +
+    const outs = data.details.filter((d) => d['狀態'] === DETAIL_OUT);
+    const returnCard = outs.length ? '<div class="card"><div class="row spread"><h2 style="margin:0">歸還（尚未歸還 ' + outs.length + ' 件）</h2>' +
+      '<button type="button" class="primary" id="rtScan">📷 掃 QR 核對</button></div>' +
+      '<p class="meta muted">掃要歸還的物品（掃到不在這張單的會被擋）或勾選，每件拍 ' + RETURN_MIN_PHOTOS + ' 張、選狀況。可分批歸還；損壞、缺件會自動登記異常案件。</p>' +
+      '<ul class="list" id="rtLines"></ul><input type="file" id="rtFile" accept="image/*" hidden>' +
+      '<div id="rtErr" class="meta" style="color:var(--bad);margin-top:6px"></div>' +
+      '<div class="row" style="justify-content:flex-end;margin-top:8px"><button type="button" class="primary" id="rtGo">歸還勾選的物品</button></div></div>' : '';
+    view.innerHTML = head + returnCard + '<div class="card"><h2>物品</h2><ul class="list">' + rows + '</ul></div>' +
       (l['狀態'] === LOAN_VOID ? '' : '<div class="card"><h2>簽核單掃描檔</h2><ul class="list">' + (scans.map((f, i) => '<li><button type="button" class="small" data-scan="' + esc(f) + '">簽核單 ' + (i + 1) + '</button></li>').join('') ||
         '<li class="muted">還沒有上傳。借出時簽好的借用單請掃描或拍照上傳。</li>') + '</ul>' +
         '<div class="row" style="margin-top:8px"><button type="button" class="primary" id="scanUp">上傳簽核單（照片或 PDF）</button><input type="file" id="scanFile" accept="image/*,application/pdf" hidden></div></div>') +
@@ -1662,6 +1669,7 @@ function renderLoan(view, data) {
         } catch (e) { toast(e.message, true); }
       };
     });
+    if (outs.length) bindReturn(view, data, outs);
     if ($('#scanUp')) {
       $('#scanUp').onclick = () => $('#scanFile').click();
       $('#scanFile').onchange = async () => {
@@ -1788,6 +1796,90 @@ function renderLoan(view, data) {
     }
   };
   drawLines();
+}
+
+/** 借用單頁的歸還區：勾選、掃描核對（還錯件擋）、照片、狀況。 */
+function bindReturn(view, data, outs) {
+  const l = data.loan;
+  const id = l['借用單號'];
+  const lines = outs.map((d) => ({ d, on: false, verified: false, condition: '正常', note: '',
+    photos: d.photos.filter((p) => p.purpose === '歸還').map((p) => p.id) }));
+  const code = (d) => d['系所內部編號'] || d['資產鍵'];
+  let picking = -1;
+  const draw = () => {
+    $('#rtLines').innerHTML = lines.map((ln, i) => '<li><div class="row"><label class="radio"><input type="checkbox" data-on="' + i + '"' + (ln.on ? ' checked' : '') + '> <strong><span class="code">' +
+      esc(code(ln.d)) + '</span> ' + esc(ln.d['名稱']) + '</strong></label>' + (ln.verified ? '<span class="chip ok">已核對</span>' : '') + '</div>' +
+      (ln.on ? '<div class="row" style="margin-top:6px"><label class="radio"><input type="checkbox" data-ver="' + i + '"' + (ln.verified ? ' checked' : '') + '> 已核對實物</label>' +
+        '<select data-cond="' + i + '" style="width:auto">' + RETURN_CONDITIONS.map((c) => '<option' + (c === ln.condition ? ' selected' : '') + '>' + c + '</option>').join('') + '</select>' +
+        '<button type="button" class="small primary" data-cam="' + i + '">📷</button><button type="button" class="small" data-lib="' + i + '">🖼</button>' +
+        '<span class="chip ' + (ln.photos.length >= RETURN_MIN_PHOTOS ? 'ok' : 'warn') + '">照片 ' + ln.photos.length + '／' + RETURN_MIN_PHOTOS + '</span></div>' +
+        (ln.condition !== '正常' ? '<input data-note="' + i + '" placeholder="說明（必填）" value="' + esc(ln.note) + '" style="margin-top:6px">' : '') : '') +
+      '<div class="meta" data-msg="' + i + '"></div></li>').join('');
+    const q = (sel, fn) => $('#rtLines').querySelectorAll(sel).forEach(fn);
+    q('[data-on]', (el) => { el.onchange = () => { lines[+el.dataset.on].on = el.checked; draw(); }; });
+    q('[data-ver]', (el) => { el.onchange = () => { lines[+el.dataset.ver].verified = el.checked; }; });
+    q('[data-cond]', (el) => { el.onchange = () => { lines[+el.dataset.cond].condition = el.value; draw(); }; });
+    q('[data-note]', (el) => { el.oninput = () => { lines[+el.dataset.note].note = el.value; }; });
+    q('[data-cam],[data-lib]', (el) => {
+      el.onclick = () => {
+        picking = +(el.dataset.cam || el.dataset.lib);
+        if (el.dataset.cam !== undefined) $('#rtFile').setAttribute('capture', 'environment'); else $('#rtFile').removeAttribute('capture');
+        $('#rtFile').click();
+      };
+    });
+  };
+  $('#rtFile').onchange = async () => {
+    const file = $('#rtFile').files[0];
+    $('#rtFile').value = '';
+    if (!file || picking < 0) return;
+    const ln = lines[picking];
+    const msg = $('#rtLines').querySelector('[data-msg="' + picking + '"]');
+    try {
+      msg.textContent = '上傳中…';
+      const takenAt = await readExifDate(file);
+      const blob = await compressImage(file);
+      const rec = await api('loan.photo', { loanId: id, detailId: ln.d['明細編號'], itemId: ln.d['資產鍵'], purpose: '歸還', base64: await blobToBase64(blob), takenAt, originalName: file.name });
+      ln.photos.push(rec['照片編號']);
+      draw();
+    } catch (e) { msg.innerHTML = '<span style="color:var(--bad)">✖ ' + esc(e.message) + '</span>'; }
+  };
+  $('#rtScan').onclick = () => {
+    const dlg = $('#dialog');
+    const form = $('#dialogForm');
+    form.innerHTML = '<h2>掃 QR 核對歸還</h2><div class="scanbox"><video id="rtVideo" playsinline muted autoplay></video><div class="scanframe"></div></div>' +
+      '<p class="meta" id="rtMsg">正在開啟相機…</p><div class="row" style="justify-content:flex-end"><button value="cancel">完成</button></div>';
+    dlg.showModal();
+    dlg.addEventListener('close', () => { stopScanner(); draw(); }, { once: true });
+    startScanner($('#rtVideo'), $('#rtMsg'), (text) => {
+      const p = parseQrText(text);
+      const ln = p && p.type === 'ITEM' && lines.find((x) => x.d['資產鍵'] === p.key || code(x.d) === p.key);
+      if (!ln) {
+        $('#rtMsg').innerHTML = '<span style="color:var(--bad)">✖ ' + esc(p ? p.key : text.slice(0, 40)) + ' 不在這張借用單的借出中物品（還錯件）</span>';
+        if (navigator.vibrate) navigator.vibrate([60, 60, 60]);
+        return true;
+      }
+      ln.on = true; ln.verified = true;
+      $('#rtMsg').textContent = '✔ ' + code(ln.d) + ' 已核對（本次 ' + lines.filter((x) => x.on).length + ' 件）';
+      return true;
+    });
+  };
+  $('#rtGo').onclick = async (ev) => {
+    const picked = lines.filter((x) => x.on);
+    const payload = picked.map((x) => ({ detailId: x.d['明細編號'], verified: x.verified, photoIds: x.photos, photoCount: x.photos.length, condition: x.condition, note: x.note }));
+    const errs = returnErrors(outs, payload);
+    if (errs.length) { $('#rtErr').innerHTML = errs.map(esc).join('<br>'); return; }
+    ev.target.disabled = true;
+    try {
+      const r = await api('loan.return', { id, version: l['版本'], lines: payload });
+      toast(r.loan['狀態'] === LOAN_RETURNED ? '全部歸還，已結案' : '已歸還 ' + picked.length + ' 件');
+      if (state.assets) delete state.assets.ITEM;
+      renderLoan(view, r);
+    } catch (e) {
+      ev.target.disabled = false;
+      $('#rtErr').innerHTML = esc(e.message).replace(/；/g, '<br>');
+    }
+  };
+  draw();
 }
 
 // ----- 貼紙 -----

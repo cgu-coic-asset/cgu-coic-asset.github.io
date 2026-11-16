@@ -354,3 +354,81 @@ function loanScanGet_(payload) {
   const blob = DriveApp.getFileById(payload.fileId).getBlob();
   return { name: blob.getName(), mime: blob.getContentType(), base64: Utilities.base64Encode(blob.getBytes()) };
 }
+
+/**
+ * 歸還（可分批）。payload：{ id, version, lines: [{ detailId, verified, photoIds, condition, note }] }。
+ * 物品回在庫（有處理中案件則停借）；連結的固定資產回在庫；損壞、缺件自動登記異常案件；全部歸還才結案。
+ */
+function loanReturn_(payload, actor) {
+  const sh = loanSheet_();
+  const loan = findLoan_(payload.id);
+  const id = loan['借用單號'];
+  if (loan['狀態'] !== LOAN_OUT) throw new AppError('BAD_REQUEST', '這張單是' + loan['狀態'] + '，不能歸還');
+  const conflict = checkVersion(loan, payload.version);
+  if (conflict) throw new AppError('VERSION_CONFLICT', undefined, conflict);
+
+  const dsh = loanDetailSheet_();
+  const allDetails = readRows_(dsh);
+  const out = allDetails.filter(function (d) { return d['借用單號'] === id && d['狀態'] === DETAIL_OUT; });
+  const photos = readRows_(photoSheet_());
+  const byDetail = {};
+  out.forEach(function (d) { byDetail[d['明細編號']] = d; });
+  const lines = (payload.lines || []).map(function (l) {
+    const d = byDetail[l.detailId];
+    const ids = (l.photoIds || []).map(String);
+    const ok = d ? photos.filter(function (p) {
+      return ids.indexOf(p['照片編號']) !== -1 && p['類型'] === 'ITEM' && p['資產鍵'] === d['資產鍵'] && p['用途'] === '歸還' &&
+        p['關聯編號'] === l.detailId && p['狀態'] === PHOTO_ACTIVE;
+    }) : [];
+    return { detailId: l.detailId, verified: !!l.verified, photoCount: ok.length, photoIds: ok.map(function (p) { return p['照片編號']; }),
+      condition: l.condition, note: String(l.note || '').trim().slice(0, 200) };
+  });
+  const errs = returnErrors(out, lines);
+  if (errs.length) throw new AppError('BAD_REQUEST', errs.join('；'), { errors: errs });
+
+  const ish = itemSheet_();
+  const items = readRows_(ish);
+  const openCases = openCaseCountsAll_();
+  const nowText = now_();
+  const logs = [];
+  const fixedBack = [];
+  const toCase = [];
+  lines.forEach(function (l) {
+    const d = byDetail[l.detailId];
+    const note = l.condition === '正常' ? '' : '歸還：' + l.condition + '（' + l.note + '）';
+    Object.assign(d, applyChanges(d, { '狀態': DETAIL_RETURNED, '歸還時間': nowText, '歸還經手人': actor.email,
+      '備註': [d['備註'], note].filter(Boolean).join('；').slice(0, 300) }, ['狀態', '歸還時間', '歸還經手人', '備註'], actor.email, nowText).row);
+    const it = items.find(function (r) { return r['物品ID'] === d['資產鍵']; });
+    if (!it) return;
+    const next = statusAfterReturn(openCases['ITEM:' + it['物品ID']]);
+    const ir = applyChanges(it, { '狀態': next }, ['狀態'], actor.email, nowText);
+    Object.assign(it, ir.row);
+    logs.push({ action: '歸還', objectType: '系所物品', key: it['物品ID'], before: ir.before,
+      after: Object.assign({ 借用單: id, 狀況: l.condition, 照片: l.photoIds.length }, ir.after) });
+    if (it['資產編號']) fixedBack.push({ it: it });
+    if (RETURN_CASE_TYPES[l.condition]) toCase.push({ it: it, l: l, d: d });
+  });
+  writeAllRows_(dsh, allDetails, []);
+  writeAllRows_(ish, items, []);
+  fixedBack.forEach(function (p) {
+    const fixed = findAssetRows_('FIXED', p.it['資產編號'])[0];
+    if (assetStatus(fixed) !== '借出') return;
+    const fr = applyChanges(fixed, { '狀態': '在庫' }, ['狀態'], actor.email, nowText);
+    writeRow_(targetSheet_(importTarget_('FIXED')), fixed._row, fr.row);
+    logs.push({ action: '歸還', objectType: '固定資產', key: fixed['資產編號'], before: fr.before, after: Object.assign({ 借用單: id }, fr.after) });
+  });
+  const remaining = allDetails.filter(function (d) { return d['借用單號'] === id && d['狀態'] === DETAIL_OUT; }).length;
+  const changes = remaining ? {} : { '狀態': LOAN_RETURNED, '結案時間': nowText };
+  const lr = applyChanges(loan, Object.assign({ '修改時間': nowText }, changes), ['狀態', '結案時間'], actor.email, nowText);
+  // 分批歸還也要讓版本前進，避免兩人同時歸還同一張單
+  if (!lr.changed) Object.assign(lr.row, { '版本': nextVersion(loan['版本']), '修改時間': nowText, '修改者': actor.email });
+  writeRow_(sh, loan._row, lr.row);
+  logs.unshift({ action: remaining ? '借用單分批歸還' : '借用單全部歸還', objectType: '借用單', key: id, before: lr.before,
+    after: Object.assign({ 本次件數: lines.length, 尚未歸還: remaining }, lr.after) });
+  writeLogs_(actor, logs, '');
+  toCase.forEach(function (p) {
+    caseOpen_({ type: 'ITEM', key: p.it['物品ID'], caseType: RETURN_CASE_TYPES[p.l.condition], description: '歸還時' + p.l.condition + '：' + p.l.note,
+      source: '借還', sourceId: p.d['明細編號'] }, actor);
+  });
+  return loanGet_({ id: id });
+}

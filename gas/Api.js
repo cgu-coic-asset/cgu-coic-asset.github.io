@@ -40,6 +40,7 @@ function actions_() {
     'loan.get': { perm: 'loan.manage', handler: loanGet_ },
     'loan.photo': { perm: 'loan.manage', write: true, handler: loanPhoto_ },
     'loan.checkout': { perm: 'loan.manage', write: true, handler: loanCheckout_ },
+    'loan.return': { perm: 'loan.manage', write: true, handler: loanReturn_ },
     'loan.uploadScan': { perm: 'loan.manage', write: true, handler: loanUploadScan_ },
     'loan.scan': { perm: 'loan.manage', handler: loanScanGet_ },
     'item.create': { perm: 'asset.edit', write: true, handler: itemCreate_ },
