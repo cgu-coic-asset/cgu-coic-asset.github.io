@@ -52,6 +52,11 @@ function actions_() {
     'system.cleanup': { perm: 'system.manage', write: true, handler: systemCleanup_ },
     'system.mask': { perm: 'system.manage', write: true, handler: systemMask_ },
     'system.archiveLogs': { perm: 'system.manage', write: true, handler: systemArchiveLogs_ },
+    'handover.status': { perm: 'system.manage', handler: handoverStatus_ },
+    'handover.preview': { perm: 'system.manage', handler: handoverPreview_ },
+    'handover.restore': { perm: 'system.manage', write: true, handler: handoverRestore_ },
+    'handover.relink': { perm: 'system.manage', write: true, handler: handoverRelink_ },
+    'handover.download': { perm: 'system.manage', handler: handoverDownload_ },
     // 借用 B：固定資產借用與送修紀錄（User 限自己名下）
     'fixed.records': { perm: 'fixed.record', handler: fixedRecords_ },
     'fixed.add': { perm: 'fixed.record', write: true, handler: fixedRecordAdd_ },

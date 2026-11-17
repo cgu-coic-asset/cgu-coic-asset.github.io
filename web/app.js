@@ -2800,7 +2800,9 @@ async function viewSystem(view) {
     '<div class="card"><h2>LOG 封存</h2><p class="meta muted">LOG 每年一檔。每年 1 月的排程會把去年的移到「資料/LOG封存」並鎖定分頁，查詢照常。</p>' +
     '<p>有 LOG 的年份：' + (d.logYears.map((y) => esc(y) + (d.archivedLogs.indexOf(y) !== -1 ? '（已封存）' : '')).join('、') || '無') + '</p>' +
     (toArchive.length ? '<div class="row"><button type="button" id="syArchive">封存 ' + toArchive.join('、') + ' 年</button></div>' : '') + '</div>' +
+    '<div class="card"><h2>交接與重建</h2><div id="hoBox"><p class="muted">載入中…</p></div></div>' +
     '<div class="meta muted" id="syMsg"></div><a class="btn" href="#/">回首頁</a>';
+  loadHandover();
 
   const run = async (btn, action, payload, done) => {
     btn.disabled = true;
@@ -2822,5 +2824,93 @@ async function viewSystem(view) {
     run(e.target, 'system.mask', { ids: d.mask.map((m) => m.id) }, (r) => '已遮蔽 ' + r.masked + ' 張' + (r.fixedRecords ? '（固定資產紀錄 ' + r.fixedRecords + ' 筆）' : ''));
   };
   if ($('#syArchive')) $('#syArchive').onclick = (e) => run(e.target, 'system.archiveLogs', {}, (r) => r.archived.length ? '已封存 ' + r.archived.join('、') + ' 年' : '沒有要封存的');
+}
+
+// ----- 交接精靈（M4-07） -----
+
+function downloadBase64(base64, name, mime) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bytes], { type: mime }));
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+async function loadHandover() {
+  const box = $('#hoBox');
+  if (!box) return;
+  let h;
+  try { h = await api('handover.status'); } catch (e) { box.innerHTML = '<p>' + esc(e.message) + '</p>'; return; }
+  const empty = !h.blockers.length;
+  const mb = (n) => (n / 1048576).toFixed(1) + ' MB';
+  box.innerHTML =
+    '<h3>同帳號交接（B）</h3><p class="meta muted">新舊 Super 當面交接帳號與驗證器時，下載一份最新備份交給新 Super 保存，並依交接 SOP 核對。</p>' +
+    '<div class="row"><button type="button" id="hoDown"' + (h.backups.length ? '' : ' disabled') + '>下載最新備份</button></div>' +
+    '<h3 style="margin-top:14px">新帳號重建（A）</h3>' +
+    (empty ? '<ol class="meta"><li>照 <code>docs/重建步驟.md</code> 第 0～6 步重建空系統，並用這個帳號登入。</li>' +
+      '<li>把 NAS「備份」資料夾裡最新的備份包上傳到雲端「資產管理系統/備份」，按下方「預覽」再「還原資料」。</li>' +
+      '<li>把 NAS 的「照片」「借用」資料夾上傳到雲端「資產管理系統」，分別改名為「' + HANDOVER_PHOTO_SOURCE + '」「' + HANDOVER_LOAN_SOURCE + '」，再按「連結照片與簽核單」。</li>' +
+      '<li>看核對報告，全部「符合」才算完成。</li></ol>' +
+      '<label>備份包<select id="hoFile">' + (h.backups.map((b) => '<option value="' + esc(b.id) + '">' + esc(b.name) + '（' + mb(b.size) + '）</option>').join('') ||
+        '<option value="">「備份」資料夾沒有備份包</option>') + '</select></label>' +
+      '<div class="row" style="margin-top:8px"><button type="button" id="hoPreview"' + (h.backups.length ? '' : ' disabled') + '>預覽</button></div><div id="hoPrev"></div>'
+      : '<p class="meta muted">這個系統已經有資料，不能還原（還原只用在全新帳號）：' + esc(h.blockers.slice(0, 5).join('、')) + (h.blockers.length > 5 ? '…' : '') + '</p>') +
+    '<p class="meta">還原來源資料夾：' + HANDOVER_PHOTO_SOURCE + ' ' + (h.sources.photos ? '✔' : '✖') + '、' + HANDOVER_LOAN_SOURCE + ' ' + (h.sources.loans ? '✔' : '✖') + '</p>' +
+    '<div class="row"><button type="button" id="hoRelink"' + (h.sources.photos || h.sources.loans ? '' : ' disabled') + '>連結照片與簽核單</button></div>' +
+    '<div class="meta muted" id="hoMsg"></div>' +
+    (h.records.length ? '<details style="margin-top:10px"><summary>交接紀錄（' + h.records.length + '）</summary><ul class="list">' + h.records.map((r) =>
+      '<li><div class="row spread"><span>' + esc(r['項目']) + '</span><span class="chip ' + (String(r['核對結果']).indexOf('符合') === 0 ? 'ok' : 'bad') + '">' + esc(r['核對結果']) + '</span></div>' +
+      '<div class="meta">' + esc(r['日期']) + '｜' + esc(r['新一等']) + (r['備註'] ? '｜' + esc(r['備註']) : '') + '</div></li>').join('') + '</ul></details>' : '');
+
+  $('#hoDown').onclick = async (e) => {
+    e.target.disabled = true;
+    $('#hoMsg').textContent = '下載中…';
+    try { const r = await api('handover.download', {}); downloadBase64(r.base64, r.name, 'application/zip'); $('#hoMsg').textContent = '已下載 ' + r.name; }
+    catch (err) { $('#hoMsg').textContent = err.message; }
+    e.target.disabled = false;
+  };
+  if ($('#hoPreview')) $('#hoPreview').onclick = async (e) => {
+    const fileId = $('#hoFile').value;
+    e.target.disabled = true;
+    $('#hoPrev').innerHTML = '<p class="muted">讀取備份包…</p>';
+    try {
+      const p = await api('handover.preview', { fileId });
+      const s = p.summary;
+      $('#hoPrev').innerHTML = '<div class="card"><p><strong>' + esc(p.name) + '</strong>｜備份時間 ' + esc(s.time) + '｜版本 ' + esc(s.version) + '｜資料 ' + s.rows + ' 筆、照片紀錄 ' + s.photos + ' 筆</p>' +
+        '<ul class="list">' + s.books.map((b) => '<li><strong>' + esc(b.name) + '</strong><div class="meta">' + b.sheets.map((x) => esc(x.title) + ' ' + x.rows).join('、') + '</div></li>').join('') + '</ul>' +
+        (p.blockers.length ? '<p class="bad">系統已有資料，不能還原。</p>' :
+          '<p class="meta muted">還原後，帳號名單以備份為準（你會保留為 Super）、設定以備份為準；這個帳號重建後的 LOG 接在備份 LOG 後面。</p>' +
+          '<label>輸入「還原」確認<input id="hoConfirm" autocomplete="off"></label><div class="row" style="margin-top:8px"><button type="button" class="danger" id="hoRestore">還原資料</button></div>') + '</div>';
+      if ($('#hoRestore')) $('#hoRestore').onclick = async (ev) => {
+        ev.target.disabled = true;
+        $('#hoMsg').textContent = '還原中（可能要一兩分鐘）…';
+        try {
+          const r = await api('handover.restore', { fileId, confirm: $('#hoConfirm').value.trim() });
+          toast(r.ok ? '資料還原完成，筆數全部符合' : '資料已還原，但有分頁筆數不符，請看交接紀錄', !r.ok);
+          loadHandover();
+        } catch (err) { $('#hoMsg').textContent = err.message; ev.target.disabled = false; }
+      };
+    } catch (err) { $('#hoPrev').innerHTML = '<p>' + esc(err.message) + '</p>'; }
+    e.target.disabled = false;
+  };
+  $('#hoRelink').onclick = async (e) => {
+    e.target.disabled = true;
+    let round = 0;
+    try {
+      for (;;) {
+        round++;
+        $('#hoMsg').textContent = '連結中（第 ' + round + ' 輪，每輪最多 4 分半）…';
+        const r = await api('handover.relink', {});
+        $('#hoMsg').textContent = '有效照片 ' + r.total + '，已連結 ' + r.linked + '，找不到 ' + r.missing.length + (r.remaining ? '，還有 ' + r.remaining + ' 張' : '') +
+          '；簽核單 ' + r.scans.files + ' 個（' + r.scans.loans + ' 張借用單）';
+        if (!r.remaining) { toast(r.ok ? '照片全部連結完成' : '有照片找不到，請看交接紀錄', !r.ok); break; }
+      }
+      loadHandover();
+    } catch (err) { $('#hoMsg').textContent = err.message; e.target.disabled = false; }
+  };
 }
 
