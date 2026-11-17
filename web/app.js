@@ -7,6 +7,7 @@
  * 異常案件：#/cases（處理中／已結案，Super 結案）；資產頁與批次頁「登記異常」。
  * 借用 A：公開清單選件數 → #/apply 申請 → 借用單（可列印）；#/loan 以單號＋手機查詢重印。
  * 借用管理：#/loans（申請中／借出中／已結束）、#/loans/<單號>（借出核對、照片、簽核單）、#/loans/<單號>/print。
+ * 系統維運（Super）：#/system 備份、NAS 確認、容量、照片清理、個資遮蔽、LOG 封存；首頁警示。
  * 操作紀錄（Super）：#/logs 或 #/logs/<對象鍵>，依人、日期、資產、動作篩選，匯出 CSV。
  * 資產自主盤點資料表：#/selfcheck 或 #/selfcheck/<批次>，固定資產每件一頁，列印或存 PDF，或匯出 Word（每檔 50 件）。
  * 權限判斷只用來決定顯示什麼；真正的權限檢查在後端。
@@ -170,6 +171,7 @@ const routes = [
   { re: /^#\/managed$/, view: viewManaged, perm: 'asset.view' },
   { re: /^#\/selfcheck(?:\/([^/]+))?$/, view: viewSelfCheck, perm: 'asset.view' },
   { re: /^#\/logs(?:\/(.+))?$/, view: viewLogs, perm: 'log.view' },
+  { re: /^#\/system$/, view: viewSystem, perm: 'system.manage' },
   { re: /^#\/fixed\/([^/]+)$/, view: viewFixedRecords, perm: 'fixed.record' },
   { re: /^#\/loans\/([^/]+)$/, view: viewLoan, perm: 'loan.manage' },
   { re: /^#\/loans\/([^/]+)\/print$/, view: viewLoanPrint, perm: 'loan.manage' },
@@ -212,7 +214,7 @@ function viewHome(view) {
   const hasCodes = (me.codes || []).length > 0;
   let html = '';
   if (can(role, 'asset.view')) {
-    html += '<div id="reminders"></div><h1>工作選單</h1><div class="grid">' +
+    html += '<div id="sysAlerts"></div><div id="reminders"></div><h1>工作選單</h1><div class="grid">' +
       tile('#/scan', '掃描 QR', '查看、盤點、借出', true) +
       tile('#/assets', '資產清單', '查詢、編輯、經管人', true) +
       tile('#/inventory', '盤點', '批次、進度、未盤清單', true) +
@@ -228,7 +230,7 @@ function viewHome(view) {
     if (can(role, 'admin.manage')) {
       html += '<h1 style="margin-top:20px">系統（Super）</h1><div class="grid">' +
         tile('#/admins', '帳號', 'Super、Admin、User', true) +
-        tile('#/system', '備份與交接', '每月備份、交接包', false) +
+        tile('#/system', '系統維運', '備份、NAS、容量、清理、遮蔽', true) +
         tile('#/logs', '操作紀錄', '查詢 LOG、匯出', true) +
         '</div>';
     }
@@ -246,6 +248,7 @@ function viewHome(view) {
   }
   view.innerHTML = html;
   if (can(role, 'loan.manage')) loadReminders();
+  if (can(role, 'system.manage')) loadSystemAlerts();
 }
 
 /** 首頁提醒：申請中太久、逾期未還。 */
@@ -2691,5 +2694,96 @@ async function viewLogs(view, params) {
       $('#lgMsg').textContent = '已匯出 ' + all.rows.length + ' 筆' + (all.total > all.rows.length ? '（共 ' + all.total + ' 筆，超過上限只匯出最新的）' : '') + '；改前、改後過長的已截斷，完整內容在試算表。';
     } catch (e) { $('#lgMsg').textContent = '匯出失敗：' + e.message; }
   };
+}
+
+// ---------- 系統維運（M4，Super） ----------
+
+/** Super 首頁警示：容量達門檻、NAS 確認日太久、最近一次備份失敗或超過 35 天。 */
+async function loadSystemAlerts() {
+  let r;
+  try { r = await api('system.alerts'); } catch (e) { return; }
+  const box = $('#sysAlerts');
+  if (!box) return;
+  const items = [];
+  if (r.capacity.level) items.push('<span class="chip ' + (r.capacity.level >= 85 ? 'bad' : 'warn') + '">雲端容量 ' + r.capacity.pct + '%</span> ' + esc(r.capacity.usedText));
+  const daysSince = (d) => d ? Math.floor((Date.parse(r.today) - Date.parse(String(d).slice(0, 10))) / 86400000) : null;
+  const nas = daysSince(r.nasDate);
+  if (nas === null || nas > NAS_REMIND_DAYS) items.push('<span class="chip warn">NAS 待確認</span> ' + (r.nasDate ? '上次 ' + esc(r.nasDate) : '尚未確認過'));
+  const b = r.lastBackup;
+  if (!b || String(b.result).indexOf('成功') !== 0 || daysSince(b.time) > 35) {
+    items.push('<span class="chip warn">備份</span> ' + (b ? esc(String(b.time).slice(0, 10)) + ' ' + esc(b.result) : '還沒有備份'));
+  }
+  if (!items.length) return;
+  box.innerHTML = '<div class="card"><h2>系統提醒</h2><ul class="list">' + items.map((x) => '<li>' + x + '</li>').join('') +
+    '</ul><a class="btn" href="#/system">到系統維運</a></div>';
+}
+
+async function viewSystem(view) {
+  view.innerHTML = '<h1>系統維運</h1><p class="muted">載入中…</p>';
+  let d;
+  try { d = await api('system.status'); } catch (e) {
+    view.innerHTML = '<h1>系統維運</h1><div class="card"><p>' + esc(e.message) + '</p></div><a class="btn" href="#/">回首頁</a>';
+    return;
+  }
+  const cap = d.capacity;
+  const c = d.cleanup;
+  const toArchive = d.logYears.filter((y) => +y < +d.today.slice(0, 4) && d.archivedLogs.indexOf(y) === -1);
+  const photoLi = (p) => '<li><div>' + esc(p.path) + '</div><div class="meta">' + esc(p.purpose) + '｜上傳 ' + esc(p.uploaded) + '</div></li>';
+  const more = (shown, total) => total > shown ? '<li class="muted">…另 ' + (total - shown) + ' 張</li>' : '';
+  view.innerHTML = '<h1>系統維運</h1>' +
+    '<div class="card"><h2>雲端容量</h2><p><strong>' + (cap.pct === null ? '無法取得' : cap.pct + '%') + '</strong> ' + esc(cap.usedText) +
+    (cap.level ? ' <span class="chip ' + (cap.level >= 85 ? 'bad' : 'warn') + '">已達 ' + cap.level + '% 警示</span>' : '') + '</p>' +
+    '<p class="meta muted">警示門檻 ' + esc(d.settings.thresholds || '70,85,95') + '%（設定分頁「容量警示門檻」）。容量吃緊時先確認 NAS 同步，再清理到期照片。</p></div>' +
+
+    '<div class="card"><h2>備份</h2><p class="meta muted">每月 1 號凌晨自動備份（資料與照片清單，不含照片；照片由 NAS 同步），保留最新 ' + BACKUP_KEEP + ' 份，更舊的移到雲端垃圾桶。</p>' +
+    '<ul class="list">' + (d.backups.slice(0, 6).map((b) => '<li><div class="row spread"><strong>' + esc(b['檔名']) + '</strong><span class="chip ' +
+      (String(b['結果']).indexOf('成功') === 0 ? 'ok' : 'bad') + '">' + esc(b['結果']) + '</span></div><div class="meta">' + esc(b['時間']) + '｜' + esc(b['類型']) +
+      (b['資料筆數'] !== '' ? '｜資料 ' + esc(b['資料筆數']) + ' 筆、照片紀錄 ' + esc(b['照片數']) + ' 筆' : '') + '</div></li>').join('') || '<li class="muted">還沒有備份。</li>') + '</ul>' +
+    '<div class="row"><button type="button" class="primary" id="syBackup">立即備份</button></div></div>' +
+
+    '<div class="card"><h2>NAS 同步確認</h2><p>目前 NAS 確認日：<strong>' + esc(d.nasDate || '尚未確認') + '</strong></p>' +
+    '<p class="meta muted">每月到 NAS 確認「資產管理系統」資料夾（照片、借用）已同步到最新後再按。系統只會清理這天以前上傳的照片。</p>' +
+    '<div class="row"><button type="button" id="syNas">NAS 已同步（設為今天）</button></div></div>' +
+
+    '<div class="card"><h2>雲端照片清理</h2>' + (c.blocked ? '<p class="muted">' + esc(c.blocked) + '</p>' :
+      '<p>可清理 <strong>' + c.count + '</strong> 項：盤點照片 ' + c.inventoryTotal + '、借還照片 ' + c.loanTotal + '、簽核單 ' + c.scans.length + '</p>' +
+      '<p class="meta muted">規則：建檔照片永久保留；盤點照片上傳滿一年且不是該件最近一次盤點的；借還照片與簽核單在借用單結案滿 ' + esc(d.settings.loanYears || '1') +
+      ' 年。都必須早於 NAS 確認日。清理是把雲端檔移到垃圾桶（30 天內可救回），之後只剩 NAS 上的檔案。</p>' +
+      (c.count ? '<details><summary>查看清單</summary><ul class="list">' + c.inventory.map(photoLi).join('') + more(c.inventory.length, c.inventoryTotal) +
+        c.loan.map(photoLi).join('') + more(c.loan.length, c.loanTotal) +
+        c.scans.map((x) => '<li><div>簽核單（借用單 ' + esc(x.loanId) + '）</div></li>').join('') + '</ul></details>' +
+        '<div class="row" style="margin-top:8px"><button type="button" class="danger" id="syClean">清理 ' + c.count + ' 項</button></div>' : '')) + '</div>' +
+
+    '<div class="card"><h2>個資遮蔽</h2><p class="meta muted">借用單已歸還（或已作廢）並結案滿 ' + esc(d.settings.maskYears || '2') +
+    ' 年，借用人姓名、學號、手機、Email 改成「王○明、09xx-xxx-123」形式，借還紀錄保留。遮蔽後無法復原，借用人也不能再用單號＋手機查詢。</p>' +
+    (d.mask.length ? '<details><summary>待遮蔽 ' + d.mask.length + ' 張</summary><ul class="list">' + d.mask.map((m) => '<li>' + esc(m.id) + ' ' + esc(m.name) +
+      '<div class="meta">' + esc(m.status) + '｜結案 ' + esc(m.closed) + '</div></li>').join('') + '</ul></details>' +
+      '<div class="row" style="margin-top:8px"><button type="button" class="danger" id="syMask">遮蔽 ' + d.mask.length + ' 張</button></div>' : '<p class="muted">沒有待遮蔽的借用單。</p>') + '</div>' +
+
+    '<div class="card"><h2>LOG 封存</h2><p class="meta muted">LOG 每年一檔。每年 1 月的排程會把去年的移到「資料/LOG封存」並鎖定分頁，查詢照常。</p>' +
+    '<p>有 LOG 的年份：' + (d.logYears.map((y) => esc(y) + (d.archivedLogs.indexOf(y) !== -1 ? '（已封存）' : '')).join('、') || '無') + '</p>' +
+    (toArchive.length ? '<div class="row"><button type="button" id="syArchive">封存 ' + toArchive.join('、') + ' 年</button></div>' : '') + '</div>' +
+    '<div class="meta muted" id="syMsg"></div><a class="btn" href="#/">回首頁</a>';
+
+  const run = async (btn, action, payload, done) => {
+    btn.disabled = true;
+    $('#syMsg').textContent = '處理中…';
+    try { const r = await api(action, payload); toast(done(r)); viewSystem(view); }
+    catch (e) { toast(e.message, true); btn.disabled = false; $('#syMsg').textContent = ''; }
+  };
+  $('#syBackup').onclick = (e) => run(e.target, 'system.backup', {}, (r) => '已備份 ' + r.name + (r.removed.length ? '，移除舊備份 ' + r.removed.length + ' 份' : ''));
+  $('#syNas').onclick = (e) => {
+    if (!confirm('確定 NAS 上的「資產管理系統」資料夾已同步到最新？')) return;
+    run(e.target, 'system.nasConfirm', {}, (r) => 'NAS 確認日設為 ' + r.nasDate);
+  };
+  if ($('#syClean')) $('#syClean').onclick = (e) => {
+    if (!confirm('把 ' + c.count + ' 項移到雲端垃圾桶？請先確認 NAS 上有這些檔案。')) return;
+    run(e.target, 'system.cleanup', { count: c.count }, (r) => '已清理照片 ' + r.photos + '、簽核單 ' + r.scans + (r.remaining ? '，還有 ' + r.remaining + ' 項請再按一次' : ''));
+  };
+  if ($('#syMask')) $('#syMask').onclick = (e) => {
+    if (!confirm('遮蔽 ' + d.mask.length + ' 張借用單的借用人個資？這個動作無法復原。')) return;
+    run(e.target, 'system.mask', { ids: d.mask.map((m) => m.id) }, (r) => '已遮蔽 ' + r.masked + ' 張' + (r.fixedRecords ? '（固定資產紀錄 ' + r.fixedRecords + ' 筆）' : ''));
+  };
+  if ($('#syArchive')) $('#syArchive').onclick = (e) => run(e.target, 'system.archiveLogs', {}, (r) => r.archived.length ? '已封存 ' + r.archived.join('、') + ' 年' : '沒有要封存的');
 }
 

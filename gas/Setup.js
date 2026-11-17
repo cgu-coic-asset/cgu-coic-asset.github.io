@@ -181,15 +181,19 @@ function seedFirstAdmin_(sh, report) {
 /**
  * 安裝排程（在編輯器以存放帳號執行一次；重跑不會重複安裝）。
  * dailyLoanCleanup：每天凌晨 3 點作廢逾期的借用申請。
+ * monthlyMaintenance：每月 1 號凌晨 4 點備份、封存去年 LOG、寄月度提醒信。
  */
 function installTriggers() {
-  const want = [{ fn: 'dailyLoanCleanup', hour: 3 }];
+  const want = [
+    { fn: 'dailyLoanCleanup', text: '每天 3 點', make: function (b) { return b.everyDays(1).atHour(3); } },
+    { fn: 'monthlyMaintenance', text: '每月 1 號 4 點', make: function (b) { return b.onMonthDay(1).atHour(4); } },
+  ];
   const have = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
   const report = [];
   want.forEach(function (w) {
     if (have.indexOf(w.fn) !== -1) { report.push('沿用 ' + w.fn); return; }
-    ScriptApp.newTrigger(w.fn).timeBased().everyDays(1).atHour(w.hour).inTimezone(TZ).create();
-    report.push('安裝 ' + w.fn + '（每天 ' + w.hour + ' 點）');
+    w.make(ScriptApp.newTrigger(w.fn).timeBased()).inTimezone(TZ).create();
+    report.push('安裝 ' + w.fn + '（' + w.text + '）');
   });
   console.log(report.join('\n'));
   return report;

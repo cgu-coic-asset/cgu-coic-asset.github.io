@@ -45,6 +45,13 @@ function actions_() {
     'managed.overview': { perm: 'asset.view', handler: managedOverview_ },
     'selfcheck.data': { perm: 'asset.view', handler: selfCheckData_ },
     'log.query': { perm: 'log.view', handler: logQuery_ },
+    'system.status': { perm: 'system.manage', handler: systemStatus_ },
+    'system.alerts': { perm: 'system.manage', handler: systemAlerts_ },
+    'system.backup': { perm: 'system.manage', write: true, handler: systemBackup_ },
+    'system.nasConfirm': { perm: 'system.manage', write: true, handler: systemNasConfirm_ },
+    'system.cleanup': { perm: 'system.manage', write: true, handler: systemCleanup_ },
+    'system.mask': { perm: 'system.manage', write: true, handler: systemMask_ },
+    'system.archiveLogs': { perm: 'system.manage', write: true, handler: systemArchiveLogs_ },
     // 借用 B：固定資產借用與送修紀錄（User 限自己名下）
     'fixed.records': { perm: 'fixed.record', handler: fixedRecords_ },
     'fixed.add': { perm: 'fixed.record', write: true, handler: fixedRecordAdd_ },

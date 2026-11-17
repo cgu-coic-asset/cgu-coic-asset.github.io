@@ -63,6 +63,7 @@ button, .btn {
   background: var(--card); color: var(--text); font: inherit; cursor: pointer; text-decoration: none;
 }
 button.primary, .btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { background: transparent; color: var(--bad); border-color: var(--bad); }
 button:disabled { opacity: .5; cursor: default; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .spread { justify-content: space-between; }
