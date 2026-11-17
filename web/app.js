@@ -183,6 +183,8 @@ const routes = [
 
 function render() {
   stopScanner();
+  // 每次換頁加一；非同步載入完成時若已換到別頁（例：連續掃好幾張貼紙），舊的結果不畫，避免蓋掉新的頁面
+  state.viewSeq = (state.viewSeq || 0) + 1;
   const hash = location.hash || '#/';
   const view = $('#view');
   for (const r of routes) {
@@ -516,14 +518,17 @@ async function viewAsset(view, params) {
   if (!can(state.me.role, 'asset.view')) return viewPublicAsset(view, type, key);
   state.lastAssetKey = params[0] + '/' + key;
   view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1><p class="muted">載入中…</p>';
+  const seq = state.viewSeq;
   let data;
   try {
     data = await api('asset.get', { type, key });
   } catch (e) {
+    if (seq !== state.viewSeq) return;
     view.innerHTML = '<h1>' + esc(label) + ' ' + esc(key) + '</h1><div class="card"><p>' + esc(e.message) + '</p></div>' +
       '<a class="btn" href="#/assets">回資產清單</a>';
     return;
   }
+  if (seq !== state.viewSeq) return;
   renderAssetDetail(view, type, data.rows, data.managers, data.items, data.inventory, data.cases);
 }
 
@@ -531,15 +536,18 @@ async function viewAsset(view, params) {
 async function viewPublicAsset(view, type, key) {
   const label = ASSET_TYPES[type].label;
   view.innerHTML = '<h1>' + esc(label) + '</h1><p class="muted">載入中…</p>';
+  const seq = state.viewSeq;
   let data;
   try {
     data = await api('public.get', { type, key });
   } catch (e) {
+    if (seq !== state.viewSeq) return;
     view.innerHTML = '<h1>' + esc(label) + '</h1><div class="card"><p>' +
       esc(e.code === 'NOT_FOUND' ? '找不到這個編號，請確認 QR 貼紙是否正確。' : e.message) + '</p></div>' +
       loginHint() + '<a class="btn" href="#/">回首頁</a>';
     return;
   }
+  if (seq !== state.viewSeq) return;
   const a = data.asset;
   const kv = (k, v) => v && String(v).trim() ? '<tr><th>' + esc(k) + '</th><td>' + v + '</td></tr>' : '';
   const chip = a.lendable ? 'ok' : a.loan === '借出中' ? 'accent' : '';
