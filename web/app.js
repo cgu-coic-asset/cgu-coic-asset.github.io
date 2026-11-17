@@ -629,7 +629,22 @@ function viewScan(view) {
   startScanner($('#scanVideo'), $('#scanMsg'));
 }
 
-/** 開後鏡頭連續辨識：有 BarcodeDetector（Android Chrome）直接用，否則載入 jsQR（iPhone Safari）。 */
+/**
+ * 畫面上白框（.scanframe：左右各內縮 20%、上下各內縮 15%）對應到影片原始像素的範圍。
+ * 影片用 object-fit: cover 填滿，超出的部分被裁掉，所以先算看得到的範圍再內縮。
+ * 只辨識框內的 QR：一張紙上貼很多張貼紙時，才不會掃到旁邊那張。
+ */
+function scanRegion(video) {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  const cw = video.clientWidth || vw, ch = video.clientHeight || vh;
+  const k = Math.max(cw / vw, ch / vh);
+  const visW = cw / k, visH = ch / k;
+  const x0 = (vw - visW) / 2, y0 = (vh - visH) / 2;
+  // 比白框稍大一點（內縮 15%、10%），貼紙邊緣略超出框也掃得到
+  return { x: Math.round(x0 + visW * 0.15), y: Math.round(y0 + visH * 0.10), w: Math.round(visW * 0.70), h: Math.round(visH * 0.80) };
+}
+
+/** 開後鏡頭連續辨識：有 BarcodeDetector（Android Chrome）直接用，否則載入 jsQR（iPhone Safari）。只認框內、離中心最近的那一個。 */
 async function startScanner(video, msg, onText) {
   stopScanner();
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -658,7 +673,20 @@ async function startScanner(video, msg, onText) {
       const formats = await BarcodeDetector.getSupportedFormats();
       if (formats.indexOf('qr_code') !== -1) {
         const d = new BarcodeDetector({ formats: ['qr_code'] });
-        detect = async () => { const r = await d.detect(video); return r.length ? r[0].rawValue : ''; };
+        detect = async () => {
+          if (!video.videoWidth) return '';
+          const box = scanRegion(video);
+          const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+          let best = null, bestDist = Infinity;
+          (await d.detect(video)).forEach((c) => {
+            const b = c.boundingBox;
+            const x = b.x + b.width / 2, y = b.y + b.height / 2;
+            if (x < box.x || x > box.x + box.w || y < box.y || y > box.y + box.h) return;
+            const dist = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+            if (dist < bestDist) { best = c; bestDist = dist; }
+          });
+          return best ? best.rawValue : '';
+        };
       }
     } catch (e) { detect = null; }
   }
@@ -668,17 +696,18 @@ async function startScanner(video, msg, onText) {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     detect = async () => {
       if (!video.videoWidth) return '';
-      const scale = Math.min(1, 640 / video.videoWidth);
-      canvas.width = Math.round(video.videoWidth * scale);
-      canvas.height = Math.round(video.videoHeight * scale);
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const box = scanRegion(video);
+      const scale = Math.min(1, 640 / box.w);
+      canvas.width = Math.round(box.w * scale);
+      canvas.height = Math.round(box.h * scale);
+      ctx.drawImage(video, box.x, box.y, box.w, box.h, 0, 0, canvas.width, canvas.height);
       const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const r = jsQR(img.data, img.width, img.height, { inversionAttempts: 'dontInvert' });
       return r ? r.data : '';
     };
   }
   if (s.stopped) return;
-  msg.textContent = '對準貼紙上的 QR Code。';
+  msg.textContent = '把要掃的那一張 QR 放在白框中間（同一張紙上有多張貼紙時，只認框內的）。';
   const tick = async () => {
     if (s.stopped) return;
     let text = '';
